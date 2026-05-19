@@ -34,6 +34,33 @@ class MigrationStats:
     current_step: str = "starting"  # starting | albums | timeline | done
     last_messages: List[str] = field(default_factory=list)
     total_messages_logged: int = 0
+    start_time: float = 0.0  # v1.0.3: set when migration actually begins
+
+    def elapsed_seconds(self) -> float:
+        """v1.0.3: elapsed time since migration start."""
+        import time
+        if self.start_time == 0.0:
+            return 0.0
+        return time.time() - self.start_time
+
+    def eta_seconds(self) -> float:
+        """v1.0.3: estimated time remaining in seconds."""
+        if self.items_done == 0 or self.items_total == 0:
+            return 0.0
+        elapsed = self.elapsed_seconds()
+        if elapsed < 1:
+            return 0.0
+        rate = self.items_done / elapsed
+        if rate <= 0:
+            return 0.0
+        return (self.items_total - self.items_done) / rate
+
+    def rate_per_minute(self) -> float:
+        """v1.0.3: current processing rate in items per minute."""
+        elapsed = self.elapsed_seconds()
+        if elapsed < 1:
+            return 0.0
+        return self.items_done / elapsed * 60
 
     def log_message(self, msg: str) -> None:
         self.last_messages.append(msg)
@@ -352,9 +379,15 @@ class Migrator:
             )
             or {}
         )
-        owner_syno_id = sharing.get("owner", {}).get(
-            "id"
-        ) or album.get("owner_user_id")
+        # v1.0.3: Synology returns sharing.owner.id=-1 for non-shared
+        # personal albums of non-admin users. Fall back to album.owner_user_id
+        # whenever sharing.owner.id is missing OR <= 0 (invalid).
+        _shared_oid = sharing.get("owner", {}).get("id")
+        owner_syno_id = (
+            _shared_oid
+            if _shared_oid is not None and _shared_oid > 0
+            else album.get("owner_user_id")
+        )
         is_shared = bool(album.get("shared")) or bool(
             sharing.get("permission")
         )
@@ -541,9 +574,12 @@ class Migrator:
         )
 
         # Identify which users can see this album
+        # v1.0.3: same fix as above for the second occurrence.
+        _shared_oid = sharing.get("owner", {}).get("id")
         owner_syno_id = (
-            sharing.get("owner", {}).get("id")
-            or album.get("owner_user_id")
+            _shared_oid
+            if _shared_oid is not None and _shared_oid > 0
+            else album.get("owner_user_id")
         )
         visible_user_ids = {owner_syno_id} if owner_syno_id else set()
         for p in sharing.get("permission", []) or []:

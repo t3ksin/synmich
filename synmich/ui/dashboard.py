@@ -85,8 +85,22 @@ class StatsPanel(Static):
             "📂 Albums:",
             f"{self.stats.albums_done}/{self.stats.albums_total}",
         )
+        # v1.0.3: elapsed time
+        _el = (datetime.now() - self.start_time).total_seconds()
+        if _el < 60:
+            _el_str = f"{int(_el)}s"
+        elif _el < 3600:
+            _el_str = f"{int(_el // 60)}min {int(_el % 60)}s"
+        else:
+            _h = int(_el // 3600)
+            _m = int((_el % 3600) // 60)
+            _el_str = f"{_h}h {_m:02d}min"
         t.add_row(
-            "⏱  ETA:",
+            "⏱  Elapsed:",
+            f"[dim]{_el_str}[/]",
+        )
+        t.add_row(
+            "🕐 ETA:",
             f"[yellow]{self._format_eta()}[/]",
         )
         t.add_row(

@@ -472,7 +472,11 @@ class Migrator:
             self.checkpoint.save()
             return
 
-        # Add to album per uploader (with their own API key)
+        # Add to album per uploader (with their own API key).
+        # v1.0.2: if a user's API key gets `no_permission` on some
+        # assets (race condition in parallel attribution), retry the
+        # failed adds using the album OWNER's key. The owner has full
+        # admin rights on the shared album and can add any visible asset.
         for uploader_name, ids in uploaded_by_uploader.items():
             if not ids:
                 continue
@@ -484,10 +488,38 @@ class Migrator:
             ok, fail = uploader.immich.add_assets_to_album(
                 immich_album_id, ids
             )
-            self._log(
-                f"   {uploader_name}: {ok} added"
-                + (f", {fail} failed" if fail else "")
-            )
+            # v1.0.2: retry with the album owner key if some assets
+            # were rejected. This is a workaround for the parallel-
+            # upload race condition where assets occasionally end up
+            # attributed to the "wrong" owner under heavy load.
+            if fail > 0 and uploader.name != owner.name:
+                retry_ok, retry_fail = (
+                    owner.immich.add_assets_to_album(
+                        immich_album_id, ids
+                    )
+                )
+                if retry_ok > 0:
+                    self._log(
+                        f"   {uploader_name}: {ok} added, "
+                        f"{retry_ok} recovered via owner retry"
+                        + (
+                            f", {retry_fail} failed"
+                            if retry_fail
+                            else ""
+                        )
+                    )
+                    ok += retry_ok
+                    fail = retry_fail
+                else:
+                    self._log(
+                        f"   {uploader_name}: {ok} added"
+                        + (f", {fail} failed" if fail else "")
+                    )
+            else:
+                self._log(
+                    f"   {uploader_name}: {ok} added"
+                    + (f", {fail} failed" if fail else "")
+                )
 
         self.checkpoint.mark_album_done(passphrase)
         self.checkpoint.save()

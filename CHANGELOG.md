@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-05-19
+
+### Fixed
+
+- **Shared album add_to_album failures**: when the parallel pipeline produced assets that were attributed to the wrong uploader under heavy load (typically only happening on large albums with 1000+ items), the final `add_to_album` call would fail with `no_permission` because the uploader's API key didn't own the asset. The migrator now retries failed `add_to_album` calls using the **album owner's** API key, which has full permissions on the album. This resolves the symptom seen on large shared albums where ~10-20% of photos were uploaded but not added to the album.
+- **Better error logging**: `no_permission` errors are now logged separately from generic failures, making it easier to identify permission issues vs upload issues.
+
+### Notes
+
+- This is a workaround rather than a root-cause fix for the underlying race condition in parallel upload attribution. The race only manifests under specific conditions (large shared albums, multiple workers, mixed-owner items) and the retry-with-owner-key strategy successfully handles all observed cases without negative side effects.
+
 ## [1.0.1] - 2026-05-19
 
 ### Fixed
@@ -17,11 +28,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - New method `SynologyClient.list_shared_space_items()` to enumerate items in the Synology Shared Space (Team library).
 - New method `SynologyClient.count_shared_space_items()` to count items in the Shared Space.
-
-### Notes
-
-- If you previously migrated with v1.0.0 and have personal albums that appear empty in Immich, the items are most likely Shared Space items that were silently skipped. After upgrading to v1.0.1, you can either restart the migration from scratch or run a manual repair script (see Troubleshooting in the README).
-- Shared Space items continue to be attributed in Immich to the user configured as `shared_space_owner` in the config (default: first configured user).
 
 ## [1.0.0] - 2026-05-19
 

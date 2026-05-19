@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "synmich"
-version = "1.0.1"
+version = "1.0.2"
 description = "Synology Photos → Immich migration tool, with shared albums support"
 readme = "README.md"
 license = { text = "MIT" }

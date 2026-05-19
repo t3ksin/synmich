@@ -169,14 +169,25 @@ class LogPanel(RichLog):
         self.set_interval(0.3, self._poll)
 
     def _poll(self) -> None:
-        msgs = self.stats.last_messages
-        if len(msgs) > self.last_count:
-            for m in msgs[self.last_count:]:
+        # v1.0.1: track total messages logged (not len of bounded buffer)
+        # to correctly handle the case where last_messages has been
+        # trimmed past 100 entries.
+        total = getattr(
+            self.stats, "total_messages_logged",
+            len(self.stats.last_messages),
+        )
+        if total > self.last_count:
+            new_count = total - self.last_count
+            # Don't read past the start of the bounded buffer.
+            new_count = min(
+                new_count, len(self.stats.last_messages)
+            )
+            for m in self.stats.last_messages[-new_count:]:
                 try:
                     self.write(m)
                 except Exception:
                     self.write(str(m))
-            self.last_count = len(msgs)
+            self.last_count = total
 
 
 class MigrationApp(App):

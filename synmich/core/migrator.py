@@ -33,9 +33,11 @@ class MigrationStats:
     current_album: str = ""
     current_step: str = "starting"  # starting | albums | timeline | done
     last_messages: List[str] = field(default_factory=list)
+    total_messages_logged: int = 0
 
     def log_message(self, msg: str) -> None:
         self.last_messages.append(msg)
+        self.total_messages_logged += 1
         if len(self.last_messages) > 100:
             self.last_messages = self.last_messages[-100:]
 

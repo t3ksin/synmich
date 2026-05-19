@@ -16,6 +16,15 @@ class SynologyError(Exception):
     pass
 
 
+def _is_shared_space(item: Dict[str, Any]) -> bool:
+    """Return True if item belongs to the Synology Shared Space.
+
+    Items in the Shared Space have owner_user_id=0 and must be
+    accessed via the SYNO.FotoTeam.* APIs instead of SYNO.Foto.*.
+    """
+    return item.get("owner_user_id") == 0
+
+
 class SynologyClient:
     """Synology Photos API client (DSM 7+).
 
@@ -215,6 +224,35 @@ class SynologyClient:
             offset += len(chunk)
         return all_items
 
+    def list_shared_space_items(
+        self, limit: int = 5000
+    ) -> List[Dict[str, Any]]:
+        """List items in the Synology Shared Space (Team library).
+
+        New in v1.0.1: uses the SYNO.FotoTeam.Browse.Item API to enumerate
+        photos and videos in the shared/team space. These items have
+        owner_user_id=0 and must be downloaded via SYNO.FotoTeam.Download.
+        """
+        all_items = []
+        offset = 0
+        while True:
+            r = self._api_get(
+                "SYNO.FotoTeam.Browse.Item",
+                "list",
+                "7",
+                {"offset": offset, "limit": limit},
+            )
+            chunk = (
+                r.json().get("data", {}).get("list", [])
+            )
+            if not chunk:
+                break
+            all_items.extend(chunk)
+            if len(chunk) < limit:
+                break
+            offset += len(chunk)
+        return all_items
+
     def count_items(
         self, album_id: Optional[int] = None
     ) -> int:
@@ -230,6 +268,13 @@ class SynologyClient:
         )
         return r.json().get("data", {}).get("count", 0)
 
+    def count_shared_space_items(self) -> int:
+        """Count items in Shared Space (new in v1.0.1)."""
+        r = self._api_get(
+            "SYNO.FotoTeam.Browse.Item", "count", "7"
+        )
+        return r.json().get("data", {}).get("count", 0)
+
     def download(
         self,
         item: Dict[str, Any],
@@ -241,6 +286,12 @@ class SynologyClient:
         (requests.Session shared across threads can cause data races
         on streamed responses, leading to wrong asset bodies being
         attributed to the wrong file).
+
+        v1.0.1: automatically routes via SYNO.FotoTeam.Download when the
+        item belongs to the Shared Space (owner_user_id=0). Previously
+        these items would fail silently with an unhelpful JSON response,
+        leaving personal albums that contained shared-space photos empty
+        in Immich.
         """
         folder.mkdir(parents=True, exist_ok=True)
         original_filename = item["filename"]
@@ -259,8 +310,18 @@ class SynologyClient:
         if not self.sid:
             return None
 
+        # v1.0.1: route to the correct API based on item ownership.
+        # Items in the Synology Shared Space (owner_user_id=0) must be
+        # downloaded via SYNO.FotoTeam.Download. All other items use
+        # SYNO.Foto.Download (per-user library).
+        download_api = (
+            "SYNO.FotoTeam.Download"
+            if _is_shared_space(item)
+            else "SYNO.Foto.Download"
+        )
+
         params = {
-            "api": "SYNO.Foto.Download",
+            "api": download_api,
             "method": "download",
             "version": "1",
             "unit_id": json.dumps([item_id]),
@@ -293,6 +354,11 @@ class SynologyClient:
             or "html" in ctype
             or "text" in ctype
         ):
+            # The API returned a JSON/HTML body instead of binary data.
+            # This usually means the wrong API was selected for this item
+            # (e.g. SYNO.Foto.Download for a shared-space item, or vice
+            # versa). v1.0.1: the routing above should prevent this, but
+            # we keep the safety net to fail closed.
             return None
 
         try:

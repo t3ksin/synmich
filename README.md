@@ -4,7 +4,7 @@
   <b>Synology Photos → Immich migration tool</b><br>
   <i>The shared-albums-aware migration tool the community has been waiting for.</i>
 </p>
-
+![Dashboard](docs/screenshots/dashboard.png)
 <p align="center">
   <a href="https://github.com/schnyder/synmich/actions"><img src="https://img.shields.io/github/actions/workflow/status/schnyder/synmich/ci.yml?branch=main" alt="CI"></a>
   <a href="https://pypi.org/project/synmich/"><img src="https://img.shields.io/pypi/v/synmich.svg" alt="PyPI"></a>

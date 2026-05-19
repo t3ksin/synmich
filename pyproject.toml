@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "synmich"
+version = "1.0.0"
+description = "Synology Photos → Immich migration tool, with shared albums support"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [
+    { name = "Jeffrey Schnyder" },
+]
+keywords = [
+    "synology",
+    "immich",
+    "photos",
+    "migration",
+    "self-hosted",
+    "backup",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: System :: Archiving :: Backup",
+]
+dependencies = [
+    "requests>=2.31",
+    "urllib3>=2.0",
+    "PyYAML>=6.0",
+    "rich>=13.7",
+    "textual>=0.50",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.1",
+    "pytest>=7",
+    "pytest-cov>=4",
+]
+
+[project.scripts]
+synmich = "synmich.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/schnyder/synmich"
+Repository = "https://github.com/schnyder/synmich"
+Issues = "https://github.com/schnyder/synmich/issues"
+
+[tool.setuptools]
+packages = [
+    "synmich",
+    "synmich.core",
+    "synmich.ui",
+    "synmich.utils",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"

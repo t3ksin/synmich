@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  synmich:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: synmich:latest
+    container_name: synmich
+    volumes:
+      - ./config:/config
+      - ./data:/data
+    stdin_open: true
+    tty: true
+    command: ["--help"]
+    # To run interactively:
+    #   docker-compose run --rm synmich init
+    #   docker-compose run --rm synmich migrate

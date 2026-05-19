@@ -8,8 +8,6 @@
   <img src="docs/screenshots/dashboard.png" alt="synmich dashboard" width="800">
 </p>
 <p align="center">
-  <a href="https://github.com/t3ksin/synmich/actions"><img src="https://img.shields.io/github/actions/workflow/status/t3ksin/synmich/ci.yml?branch=main" alt="CI"></a>
-  <a href="https://pypi.org/project/synmich/"><img src="https://img.shields.io/pypi/v/synmich.svg" alt="PyPI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT"></a>
   <a href="https://github.com/t3ksin/synmich/issues"><img src="https://img.shields.io/github/issues/t3ksin/synmich" alt="Issues"></a>
 </p>

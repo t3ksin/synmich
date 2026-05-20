@@ -154,7 +154,7 @@ migration:
 
 ## ⌨️ CLI (for power users)
 
-Prefer the terminal, or scripting / cron? Everything is available on the command line too, with a live dashboard.
+Prefer the terminal, or scripting / cron? Everything is available on the command line too — including a **full interactive setup wizard** (`synmich init`) that walks you through servers, users and options, plus a **live dashboard** during the migration.
 
 <div align="center">
 <img src="docs/screenshots/cli-immich.png" alt="synmich CLI live dashboard" width="860">

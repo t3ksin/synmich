@@ -44,12 +44,7 @@ Instead, synmich migrates **each Synology user into their own Immich account**, 
 
 ## 🖥️ The app (start here)
 
-The graphical app is the easiest way to use synmich. One window, dark theme, no command line.
-
-```bash
-pip install -e . && pip install customtkinter
-synmich gui
-```
+The graphical app is the easiest way to use synmich — one window, dark theme, no command line. Install it via the **Quick start** below, then run `synmich gui`.
 
 **Three operations, as tabs (top-right):**
 
@@ -76,46 +71,8 @@ synmich gui
 
 ## ⚡ Quick start
 
-```bash
-git clone https://github.com/t3ksin/synmich.git
-cd synmich
-python3 -m venv .venv && source .venv/bin/activate   # Windows: py -m venv .venv && .venv\Scripts\activate
-python3 -m pip install --upgrade pip setuptools wheel
-pip install -e ".[gui]"
-```
-
-**👉 Recommended — the graphical app:**
-
-```bash
-synmich gui
-```
-
-**Or the terminal wizard** (interactive setup, then migrate):
-
-```bash
-synmich init
-```
-
----
-
-## ✨ Features
-
-- 🖥️ **Graphical app** — `synmich gui` opens a dark, beginner-friendly window: add your users, pick your options, hit **Start**, and watch live progress. No command line required.
-- 👥 **Multi-user migration** — every Synology user is migrated into *their own* Immich account, in a single run.
-- 🤝 **Shared albums, your way** — keep Synology's exact sharing (`mirror-syno`), give each user their own copy (`separate`), or skip sharing (`skip`). Owners and members are preserved either way.
-- 🗂️ **Albums + timeline** — bring over the full library, just the albums, or hand-pick specific albums per user.
-- 💾 **Local backup** — download a user's Synology albums straight to a folder (Synology → local), no Immich needed.
-- 🔐 **2-factor authentication (2FA)** — if an account uses Synology's 2-step verification, synmich asks for the code **once**, then stores a **trusted device token** (exactly like your browser does) so future runs never prompt again. Tokens stay only on your machine and can be wiped from **Reset → 2FA devices**.
-- ♻️ **Resumable & deduplicated** — a checkpoint records every item, and photos already in Immich are matched by **SHA1** and skipped. Stop and re-run any time, no duplicates.
-- 🩺 **Doctor** — one command checks your servers, accounts, free disk space and config, with a clear ✓ / ✗ for each.
-- 🔒 **Safe by design** — the Synology NAS is only ever **read**, never modified.
-
----
-
-## 📦 Installation
-
-Linux, macOS & Windows. Needs **Python 3.9+**, a reachable Synology Photos
-instance, and an Immich server with one API key per user.
+Linux, macOS & Windows · **Python 3.9+** · a Synology Photos instance + an
+Immich server (one API key per user).
 
 ```bash
 git clone https://github.com/t3ksin/synmich.git
@@ -123,8 +80,11 @@ cd synmich
 python3 -m venv .venv && source .venv/bin/activate   # Windows: py -m venv .venv && .venv\Scripts\activate
 python -m pip install --upgrade pip
 pip install -e ".[gui]"
-synmich gui
 ```
+
+**👉 Recommended — the graphical app:** `synmich gui`
+
+**Or the terminal wizard** (interactive setup, then migrate): `synmich init`
 
 > Re-activate the venv (`source .venv/bin/activate`) in each new terminal. If
 > `synmich` isn't found, run **`python -m synmich gui`**.
@@ -147,6 +107,20 @@ synmich gui
   or `sudo dnf install python3-tkinter` (Fedora).
 
 </details>
+
+---
+
+## ✨ Features
+
+- 🖥️ **Graphical app** — `synmich gui` opens a dark, beginner-friendly window: add your users, pick your options, hit **Start**, and watch live progress. No command line required.
+- 👥 **Multi-user migration** — every Synology user is migrated into *their own* Immich account, in a single run.
+- 🤝 **Shared albums, your way** — keep Synology's exact sharing (`mirror-syno`), give each user their own copy (`separate`), or skip sharing (`skip`). Owners and members are preserved either way.
+- 🗂️ **Albums + timeline** — bring over the full library, just the albums, or hand-pick specific albums per user.
+- 💾 **Local backup** — download a user's Synology albums straight to a folder (Synology → local), no Immich needed.
+- 🔐 **2-factor authentication (2FA)** — if an account uses Synology's 2-step verification, synmich asks for the code **once**, then stores a **trusted device token** (exactly like your browser does) so future runs never prompt again. Tokens stay only on your machine and can be wiped from **Reset → 2FA devices**.
+- ♻️ **Resumable & deduplicated** — a checkpoint records every item, and photos already in Immich are matched by **SHA1** and skipped. Stop and re-run any time, no duplicates.
+- 🩺 **Doctor** — one command checks your servers, accounts, free disk space and config, with a clear ✓ / ✗ for each.
+- 🔒 **Safe by design** — the Synology NAS is only ever **read**, never modified.
 
 ---
 
@@ -279,9 +253,8 @@ Shipped in 2.0: the **GUI**, **local backup**, **shared-album modes**, **2FA dev
 ```bash
 git clone https://github.com/t3ksin/synmich.git
 cd synmich
-python -m venv .venv && source .venv/bin/activate
-pip install -e .
-pip install customtkinter
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[gui,dev]"
 
 synmich doctor      # sanity-check your setup
 synmich gui         # run the app from source

@@ -157,6 +157,17 @@ pip install -e ".[gui]"
 | **macOS** | use the python.org installer, or `brew install python-tk` |
 | **Windows** | included with the python.org installer |
 
+**4. Run**
+
+```bash
+synmich gui        # or: synmich init
+```
+
+> **Re-activate the venv in each new terminal** (`source .venv/bin/activate`,
+> or `.venv\Scripts\activate` on Windows) — that's what puts `synmich` on your
+> PATH. If the `synmich` command still isn't found, use `python -m synmich gui`
+> (or the full path `.venv/bin/synmich gui`).
+
 **Requirements.** Python 3.9+, a reachable Synology Photos instance, and an
 Immich server with one API key per user.
 

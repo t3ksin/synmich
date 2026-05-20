@@ -2,7 +2,7 @@
 
 <img src="docs/synmich-logo.png" alt="synmich" width="500">
 
-### Migrate Synology Photos to Immich, properly — albums, sharing and all.
+### Migrate Synology Photos to Immich — or a local backup — properly: albums, sharing and all.
 
 ![version](https://img.shields.io/badge/version-2.0.4-1D9E75)
 ![license](https://img.shields.io/badge/license-MIT-blue)

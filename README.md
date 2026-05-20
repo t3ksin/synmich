@@ -79,6 +79,7 @@ synmich gui
 ```bash
 git clone https://github.com/t3ksin/synmich.git
 cd synmich
+python3 -m venv .venv && source .venv/bin/activate   # Windows: py -m venv .venv && .venv\Scripts\activate
 pip install -e ".[gui]"
 ```
 
@@ -112,14 +113,47 @@ synmich init
 
 ## 📦 Installation
 
+Works on **Linux, macOS and Windows**. Requires **Python 3.9+**. A virtual
+environment is recommended — and required on recent macOS, where the system
+Python is "externally managed".
+
+**1. Get the code**
+
 ```bash
 git clone https://github.com/t3ksin/synmich.git
 cd synmich
-pip install -e .
-pip install customtkinter      # only needed for `synmich gui`
 ```
 
-**Requirements.** Python 3.9+, a reachable Synology Photos instance, and an Immich server with one API key per user.
+**2. Create & activate a virtual environment**
+
+| OS | Create | Activate |
+| --- | --- | --- |
+| **Linux / macOS** | `python3 -m venv .venv` | `source .venv/bin/activate` |
+| **Windows (PowerShell)** | `py -m venv .venv` | `.venv\Scripts\Activate.ps1` |
+| **Windows (cmd)** | `py -m venv .venv` | `.venv\Scripts\activate.bat` |
+
+**3. Install** (the `gui` extra pulls in customtkinter + Pillow for `synmich gui`)
+
+```bash
+pip install -e ".[gui]"
+```
+
+> On **macOS**, if `pip` or `python3` aren't found, install Python from
+> [python.org](https://www.python.org/downloads/) (it bundles Tk **and** pip),
+> or via Homebrew. Inside an activated venv, `pip` is always available.
+
+**Tkinter** (required for the GUI) ships with most Python installs. If
+`synmich gui` errors about `tkinter`:
+
+| OS | Fix |
+| --- | --- |
+| **Debian / Ubuntu** | `sudo apt install python3-tk` |
+| **Fedora / Nobara** | `sudo dnf install python3-tkinter` |
+| **macOS** | use the python.org installer, or `brew install python-tk` |
+| **Windows** | included with the python.org installer |
+
+**Requirements.** Python 3.9+, a reachable Synology Photos instance, and an
+Immich server with one API key per user.
 
 ---
 

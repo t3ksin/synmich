@@ -114,68 +114,39 @@ synmich init
 
 ## 📦 Installation
 
-Works on **Linux, macOS and Windows**. Requires **Python 3.9+**. A virtual
-environment is recommended — and required on recent macOS, where the system
-Python is "externally managed".
-
-**1. Get the code**
+Linux, macOS & Windows. Needs **Python 3.9+**, a reachable Synology Photos
+instance, and an Immich server with one API key per user.
 
 ```bash
 git clone https://github.com/t3ksin/synmich.git
 cd synmich
-```
-
-**2. Create & activate a virtual environment**
-
-| OS | Create | Activate |
-| --- | --- | --- |
-| **Linux / macOS** | `python3 -m venv .venv` | `source .venv/bin/activate` |
-| **Windows (PowerShell)** | `py -m venv .venv` | `.venv\Scripts\Activate.ps1` |
-| **Windows (cmd)** | `py -m venv .venv` | `.venv\Scripts\activate.bat` |
-
-**3. Install** (the `gui` extra pulls in customtkinter + Pillow for `synmich gui`)
-
-```bash
-python3 -m pip install --upgrade pip setuptools wheel   # editable installs need pip >= 21.3
+python3 -m venv .venv && source .venv/bin/activate   # Windows: py -m venv .venv && .venv\Scripts\activate
+python -m pip install --upgrade pip
 pip install -e ".[gui]"
+synmich gui
 ```
 
-> If you see **"neither 'setup.py' nor 'setup.cfg' found"**, your `pip` is too
-> old for editable installs — the upgrade line above fixes it.
+> Re-activate the venv (`source .venv/bin/activate`) in each new terminal. If
+> `synmich` isn't found, run **`python -m synmich gui`**.
 
-> On **macOS**, if `pip` or `python3` aren't found, install Python from
-> [python.org](https://www.python.org/downloads/) (it bundles Tk **and** pip),
-> or via Homebrew. Inside an activated venv, `pip` is always available.
+<details>
+<summary><b>Troubleshooting</b> — macOS, Windows & common errors</summary>
 
-**Tkinter** (required for the GUI) ships with most Python installs. If
-`synmich gui` errors about `tkinter`:
+- **macOS — grey / blank window:** CustomTkinter needs **Tcl/Tk 8.6**, but
+  Apple's system Python ships 8.5. Check with
+  `python -c "import tkinter; print(tkinter.TkVersion)"`; if it says `8.5`,
+  install Python from [python.org](https://www.python.org/downloads/macos/)
+  (bundles Tk 8.6) and recreate the venv.
+- **`pip` not found / "externally managed" (macOS):** use the python.org
+  Python; inside an activated venv `pip` always works.
+- **"neither 'setup.py' nor 'setup.cfg' found":** your pip is too old for
+  editable installs — `python -m pip install --upgrade pip`, then reinstall.
+- **`synmich: command not found`:** activate the venv, or use
+  `python -m synmich gui` (or `.venv/bin/synmich gui`).
+- **`tkinter` missing (Linux):** `sudo apt install python3-tk` (Debian/Ubuntu)
+  or `sudo dnf install python3-tkinter` (Fedora).
 
-| OS | Fix |
-| --- | --- |
-| **Debian / Ubuntu** | `sudo apt install python3-tk` |
-| **Fedora / Nobara** | `sudo dnf install python3-tkinter` |
-| **macOS** | use the python.org installer, or `brew install python-tk` |
-| **Windows** | included with the python.org installer |
-
-> **macOS — grey / blank window?** CustomTkinter renders as a grey window with
-> the old **Tcl/Tk 8.5** that ships with Apple's system Python. Check with
-> `python -c "import tkinter; print(tkinter.TkVersion)"` — if it says `8.5`,
-> install Python from [python.org](https://www.python.org/downloads/macos/) (it
-> bundles **Tk 8.6**) or `brew install python-tk`, then recreate the venv.
-
-**4. Run**
-
-```bash
-synmich gui        # or: synmich init
-```
-
-> **Re-activate the venv in each new terminal** (`source .venv/bin/activate`,
-> or `.venv\Scripts\activate` on Windows) — that's what puts `synmich` on your
-> PATH. If the `synmich` command still isn't found, use `python -m synmich gui`
-> (or the full path `.venv/bin/synmich gui`).
-
-**Requirements.** Python 3.9+, a reachable Synology Photos instance, and an
-Immich server with one API key per user.
+</details>
 
 ---
 

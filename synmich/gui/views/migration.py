@@ -100,15 +100,13 @@ class MigrationView(ctk.CTkFrame):
         # ---- Options + album picker (between header and the Run bar) ----
         c = W.card(self, "Options")
         c.pack(side="top", fill="x", padx=16, pady=6)
-        ar = ctk.CTkFrame(c.body, fg_color="transparent")
-        ar.pack(fill="x")
-        ctk.CTkLabel(ar, text="Albums to migrate", text_color=W.TEXT,
-                     font=W.font(13, "bold")).pack(side="left")
+        ctk.CTkLabel(c.body, text="Albums to migrate", text_color=W.TEXT,
+                     font=W.font(13, "bold")).pack(anchor="w")
         self.toggle_mode = W.SquareToggle(
-            ar, ["All albums", "Specific albums"],
+            c.body, ["All albums", "Specific albums"],
             "Specific albums" if mig.get("albums_mode") == "select"
             else "All albums", command=self._on_mode)
-        self.toggle_mode.pack(side="right")
+        self.toggle_mode.pack(anchor="w", pady=(2, 2))
 
         ctk.CTkLabel(c.body, text="Shared albums", text_color=W.TEXT,
                      font=W.font(13, "bold")).pack(anchor="w", pady=(12, 2))

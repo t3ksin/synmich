@@ -176,14 +176,12 @@ class BackupView(ctk.CTkFrame):
                                       font=W.font(11))
         self.space_lbl.pack(anchor="w", pady=(0, 8))
 
-        ar = ctk.CTkFrame(c.body, fg_color="transparent")
-        ar.pack(fill="x")
-        ctk.CTkLabel(ar, text="Albums to back up", text_color=W.TEXT,
-                     font=W.font(13, "bold")).pack(side="left")
+        ctk.CTkLabel(c.body, text="Albums to back up", text_color=W.TEXT,
+                     font=W.font(13, "bold")).pack(anchor="w")
         self.toggle_mode = W.SquareToggle(
-            ar, ["All albums", "Specific albums"], "All albums",
+            c.body, ["All albums", "Specific albums"], "All albums",
             command=self._on_mode)
-        self.toggle_mode.pack(side="right")
+        self.toggle_mode.pack(anchor="w", pady=(2, 2))
 
         ctk.CTkLabel(c.body, text="Shared albums", text_color=W.TEXT,
                      font=W.font(13, "bold")).pack(anchor="w", pady=(12, 2))

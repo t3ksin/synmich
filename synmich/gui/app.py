@@ -9,6 +9,7 @@ Layout:
 
 from __future__ import annotations
 
+import os
 import threading
 
 import customtkinter as ctk
@@ -87,10 +88,24 @@ class SynmichApp(ctk.CTk):
         self._left.grid_propagate(False)
         brand = ctk.CTkFrame(self._left, fg_color="transparent")
         brand.pack(fill="x", padx=20, pady=(20, 0))
-        ctk.CTkLabel(brand, text="synmich", font=W.font(30, "bold"),
-                     text_color="white").pack(side="left")
-        ctk.CTkLabel(brand, text=f"  {_VER}", font=W.font(15, "bold"),
-                     text_color=W.GREEN).pack(side="left", pady=(12, 0))
+        # The gradient wordmark (same design as the README / CLI banner);
+        # falls back to a large text title if the image can't be loaded.
+        logo_ok = False
+        try:
+            from PIL import Image
+            logo_path = os.path.join(os.path.dirname(__file__), "assets",
+                                     "logo.png")
+            self._logo_img = ctk.CTkImage(Image.open(logo_path),
+                                          size=(320, 80))
+            ctk.CTkLabel(brand, image=self._logo_img, text="").pack(side="left")
+            logo_ok = True
+        except Exception:  # noqa: BLE001
+            ctk.CTkLabel(brand, text="synmich", font=W.font(38, "bold"),
+                         text_color="white").pack(side="left")
+        ctk.CTkLabel(brand, text=f" {_VER}", font=W.font(13, "bold"),
+                     text_color=W.GREEN).pack(side="left",
+                                              pady=(28, 0) if logo_ok
+                                              else (16, 0))
         ctk.CTkLabel(self._left, text="Migrate & back up your Synology Photos",
                      font=W.font(11), text_color=W.MUTED).pack(
             anchor="w", padx=20, pady=(0, 8))

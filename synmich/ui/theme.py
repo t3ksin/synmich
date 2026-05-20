@@ -72,7 +72,7 @@ def print_banner(subtitle_extra: str = "") -> None:
     # Footer
     footer = Text()
     footer.append(
-        "                github.com/schnyder/synmich · MIT",
+        "                github.com/t3ksin/synmich · MIT",
         style=COLOR_MUTED,
     )
     console.print(footer)

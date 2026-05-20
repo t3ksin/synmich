@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.0.3] - 2026-05-20
+
+### Changed
+
+- GUI: the top-left brand is now the blue->cyan gradient logo (same design as
+  the README and CLI banner), with a large text fallback.
+
+### Fixed
+
+- Packaging: include the `synmich.gui` and `synmich.commands` packages and the
+  GUI logo asset (a pip install previously shipped without the GUI). Declare a
+  `gui` extra (`customtkinter`, `Pillow`) and fix the repository URLs.
+
 ## [2.0.2] - 2026-05-20
 
 ### Changed

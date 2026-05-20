@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "synmich"
-version = "2.0.2"
+version = "2.0.3"
 description = "Synology Photos → Immich migration & local backup, with a GUI and shared-album support"
 readme = "README.md"
 license = { text = "MIT" }
@@ -43,6 +43,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+gui = [
+    "customtkinter>=5.2",
+    "Pillow>=10",
+]
 dev = [
     "ruff>=0.1",
     "pytest>=7",
@@ -53,17 +57,15 @@ dev = [
 synmich = "synmich.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/schnyder/synmich"
-Repository = "https://github.com/schnyder/synmich"
-Issues = "https://github.com/schnyder/synmich/issues"
+Homepage = "https://github.com/t3ksin/synmich"
+Repository = "https://github.com/t3ksin/synmich"
+Issues = "https://github.com/t3ksin/synmich/issues"
 
-[tool.setuptools]
-packages = [
-    "synmich",
-    "synmich.core",
-    "synmich.ui",
-    "synmich.utils",
-]
+[tool.setuptools.packages.find]
+include = ["synmich*"]
+
+[tool.setuptools.package-data]
+"synmich.gui" = ["assets/*.png"]
 
 [tool.ruff]
 line-length = 100

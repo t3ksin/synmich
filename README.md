@@ -157,6 +157,12 @@ pip install -e ".[gui]"
 | **macOS** | use the python.org installer, or `brew install python-tk` |
 | **Windows** | included with the python.org installer |
 
+> **macOS — grey / blank window?** CustomTkinter renders as a grey window with
+> the old **Tcl/Tk 8.5** that ships with Apple's system Python. Check with
+> `python -c "import tkinter; print(tkinter.TkVersion)"` — if it says `8.5`,
+> install Python from [python.org](https://www.python.org/downloads/macos/) (it
+> bundles **Tk 8.6**) or `brew install python-tk`, then recreate the venv.
+
 **4. Run**
 
 ```bash

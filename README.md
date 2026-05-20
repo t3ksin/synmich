@@ -1,13 +1,13 @@
 <div align="center">
 
-```
+<pre>
    ███████╗██╗   ██╗███╗   ██╗███╗   ███╗██╗ ██████╗██╗  ██╗
    ██╔════╝╚██╗ ██╔╝████╗  ██║████╗ ████║██║██╔════╝██║  ██║
    ███████╗ ╚████╔╝ ██╔██╗ ██║██╔████╔██║██║██║     ███████║
    ╚════██║  ╚██╔╝  ██║╚██╗██║██║╚██╔╝██║██║██║     ██╔══██║
    ███████║   ██║   ██║ ╚████║██║ ╚═╝ ██║██║╚██████╗██║  ██║
    ╚══════╝   ╚═╝   ╚═╝  ╚═══╝╚═╝     ╚═╝╚═╝ ╚═════╝╚═╝  ╚═╝
-```
+</pre>
 
 **Migrate Synology Photos to Immich, properly — albums, sharing and all.**
 
@@ -30,16 +30,19 @@ synmich migrates **each Synology user into their own Immich account**, recreates
 
 > Tested in production: **67,844 photos** migrated successfully, every asset validated via SHA1 checksum.
 
-| | immich-go | **synmich** |
-| --- | :---: | :---: |
-| Single-user albums | ✅ | ✅ |
-| **Shared albums** between Synology users | ❌ | ✅ |
-| Correct **owner** preservation | ❌ | ✅ |
-| **Shared Space** photos (`owner_user_id: 0`) | ❌ | ✅ |
-| Multi-user Synology accounts | partial | ✅ |
-| Synology album permissions (upload/view) | ❌ | ✅ |
-| **Graphical app** | ❌ | ✅ |
-| Resume after interruption | limited | ✅ |
+| | immich-go | PhotoMigrator | **synmich** |
+| --- | :---: | :---: | :---: |
+| Reads the Synology Photos API | ❌ | ✅ | ✅ |
+| Multiple Synology users | ❌ | ✅ | ✅ |
+| **Shared albums** between users | ❌ | ❌ | ✅ |
+| Correct **owner** preserved per photo | ❌ | ❌ | ✅ |
+| Synology permissions → Immich roles | ❌ | ❌ | ✅ |
+| Synology **Shared Space** | ❌ | ❌ | ✅ |
+| **2FA** on the Synology source | ❌ | ❌ | ✅ |
+| Graphical interface | ❌ | ✅ web | ✅ desktop |
+| License | MIT | GPL-3.0 | MIT |
+
+<sub>Based on each project's README at the time of writing — corrections welcome. [immich-go](https://github.com/simulot/immich-go) and [PhotoMigrator](https://github.com/jaimetur/PhotoMigrator) are both excellent general-purpose photo movers; synmich is specialized for multi-user Synology Photos with shared albums.</sub>
 
 ---
 
@@ -60,7 +63,7 @@ synmich gui
 
 | Tab | What it does |
 | --- | --- |
-| **Synology to Immich** | Migrate your Synology Photos (albums + timeline) into Immich, each user into their own Immich account |
+| **Synology to Immich** | Migrate your Synology Photos (albums + timeline) into Immich — each user into their own account, **keeping the original owners, shared albums and permissions** from Synology |
 | **Synology to local** | Download your Synology albums to a folder on this computer (no Immich needed) |
 | **Immich Album Manager** | Browse and rename your Immich albums, grouped per user |
 

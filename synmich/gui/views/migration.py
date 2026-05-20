@@ -48,10 +48,11 @@ class MigrationView(ctk.CTkFrame):
         ctk.CTkLabel(self, text="Synology to Immich", font=W.font(20, "bold"),
                      text_color=W.TEXT).pack(anchor="w", padx=20, pady=(12, 0))
         ctk.CTkLabel(self, text="Migrate your Synology Photos (albums + "
-                     "timeline) into Immich - each user into their own Immich "
-                     "account.", font=W.font(12), text_color=W.MUTED,
-                     wraplength=900, justify="left", anchor="w").pack(
-            anchor="w", padx=20, pady=(0, 6))
+                     "timeline) into Immich - each user into their own "
+                     "account, keeping the original owners, shared albums and "
+                     "permissions from Synology.", font=W.font(12),
+                     text_color=W.MUTED, wraplength=900, justify="left",
+                     anchor="w").pack(anchor="w", padx=20, pady=(0, 6))
 
         # ---- RUN bar pinned at the bottom (always visible) ----
         run = W.card(self, "Run")

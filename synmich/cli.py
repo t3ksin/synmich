@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
+from rich.panel import Panel
 from rich.table import Table
 
 from synmich import __version__
@@ -40,6 +41,9 @@ from synmich.ui.theme import (
     COLOR_MUTED,
 )
 from synmich.ui.wizard import run_wizard
+from synmich.commands.doctor import cmd_doctor
+from synmich.commands.stats import cmd_stats
+from synmich.commands.checkpoints import add_subcommands as add_checkpoints_subcommands
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -62,9 +66,48 @@ def setup_logging(verbose: bool = False) -> None:
     logger.addHandler(fh)
 
 
+def _default_migrate_args() -> argparse.Namespace:
+    """Default `migrate` options used when chaining from `init`."""
+    return argparse.Namespace(
+        albums_only=False,
+        timeline_only=False,
+        sequential=False,
+        workers=None,
+        reset=False,
+        no_tui=False,
+        dry_run=False,
+        select=False,
+        all_albums=False,
+        yes=False,
+        verbose=False,
+    )
+
+
 def cmd_init(args) -> int:
-    """synmich init — Interactive wizard."""
-    return run_wizard()
+    """synmich init — Interactive wizard, then run the migration."""
+    rc = run_wizard()
+    if rc != 0:
+        return rc
+    # Chain straight into the migration so there's no need to re-type
+    # `synmich migrate`. The confirmation screen lets you review and back out
+    # before anything is uploaded. (Album selection lives in the GUI.)
+    return cmd_migrate(_default_migrate_args())
+
+
+def cmd_gui(args) -> int:
+    """synmich gui — Launch the graphical (Tkinter) interface."""
+    try:
+        from synmich.gui.app import run_gui
+    except Exception as e:  # noqa: BLE001  (missing customtkinter / Tkinter)
+        error(f"Could not start the GUI: {e}")
+        muted("  Install the GUI dependency: pip install customtkinter")
+        muted(
+            "  Tkinter itself may be missing — Fedora/Nobara: "
+            "sudo dnf install python3-tkinter ; "
+            "Debian/Ubuntu: sudo apt install python3-tk"
+        )
+        return 1
+    return run_gui()
 
 
 def cmd_config(args) -> int:
@@ -205,6 +248,39 @@ def cmd_migrate(args) -> int:
     if not sessions:
         return 1
 
+    # === "What" axis: which albums to migrate (all | select) ===
+    # `--select` opens the per-user album picker (tabs, same grouping as the
+    # GUI) and remembers the choice; `--all-albums` forces all. Without a flag,
+    # the config's albums_mode is used (default "all").
+    albums_mode = config.get("migration", {}).get("albums_mode", "all")
+    if args.select:
+        albums_mode = "select"
+    if args.all_albums:
+        albums_mode = "all"
+    config.setdefault("migration", {})["albums_mode"] = albums_mode
+
+    if albums_mode == "select":
+        from synmich.ui.album_selector import select_albums
+        preselected = set(config["migration"].get("selected_albums") or [])
+        # Re-open the picker on --select, or if nothing's chosen yet; otherwise
+        # reuse the saved selection (handy for automated / repeated runs).
+        if args.select or not preselected:
+            chosen = select_albums(sessions, preselected=preselected)
+            if chosen is None:
+                warn("Selection cancelled - migration aborted.")
+                return 0
+            config["migration"]["selected_albums"] = sorted(chosen)
+            save_config(config)
+            if chosen:
+                success(f"{len(chosen)} album(s) selected - selection saved.")
+            else:
+                warn("No album selected - nothing to migrate.")
+        else:
+            muted(
+                f"  Using the saved selection: {len(preselected)} album(s) "
+                f"(run with --select to change it)."
+            )
+
     if args.dry_run:
         print_section("Migration (DRY RUN)")
         info(
@@ -237,23 +313,66 @@ def cmd_migrate(args) -> int:
 
     # If --no-tui or --dry-run: run without dashboard
     if args.no_tui or args.dry_run:
+        import time
+        stats.start_time = time.time()
+        interrupted = False
         try:
             migrator.run()
         except KeyboardInterrupt:
             control.stop()
-            warn("Interrupted")
+            interrupted = True
+            warn("Interrupted by user")
         s = stats
+        elapsed = int(s.elapsed_seconds())
+        console.print()
         if args.dry_run:
-            success(
-                f"Dry run done. Would upload={s.uploaded} "
-                f"items across {s.albums_done} albums"
-            )
+            console.print(Panel(
+                f"[bold]Albums concerned:[/] {s.albums_done}\n"
+                f"[bold]Photos that would be migrated:[/] {s.uploaded}",
+                title="[bold yellow]🔎  DRY RUN COMPLETE[/]",
+                subtitle="[dim]nothing downloaded, nothing sent to Immich[/]",
+                border_style="yellow",
+                padding=(1, 3),
+            ))
         else:
-            success(
-                f"Done. Uploaded={s.uploaded} "
-                f"Duplicate={s.duplicate} Failed={s.failed}"
+            ok = s.failed == 0 and not interrupted
+            body = (
+                f"[bold]Albums migrated :[/] {s.albums_done}\n"
+                f"[bold]Photos uploaded :[/] [green]{s.uploaded}[/]\n"
+                f"[bold]Duplicates      :[/] {s.duplicate}\n"
+                f"[bold]Failed          :[/] "
+                + (f"[red]{s.failed}[/]" if s.failed else "0")
             )
+            if elapsed:
+                body += f"\n[bold]Duration        :[/] {elapsed}s"
+            if interrupted:
+                title = "[bold yellow]⏸  MIGRATION INTERRUPTED[/]"
+                border = "yellow"
+            elif ok:
+                title = "[bold green]✅  MIGRATION COMPLETE[/]"
+                border = "green"
+            else:
+                title = "[bold yellow]⚠  MIGRATION COMPLETE (with failures)[/]"
+                border = "yellow"
+            console.print(Panel(
+                body, title=title, border_style=border, padding=(1, 3)
+            ))
+        console.print()
         return 0
+
+    # Confirmation screen (recap + "Confirm migration" button) before the
+    # real run. The --no-tui / --dry-run paths already returned above.
+    # Skipped with --yes or when stdin is not a TTY.
+    if not getattr(args, "yes", False) and sys.stdin.isatty():
+        from synmich.ui.confirm import (
+            confirm_migration,
+            build_migration_summary,
+        )
+        if not confirm_migration(
+            build_migration_summary(sessions, config)
+        ):
+            warn("Migration cancelled.")
+            return 0
 
     # Otherwise: Textual dashboard
     from synmich.ui.dashboard import MigrationApp
@@ -534,6 +653,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     p_init.set_defaults(func=cmd_init)
 
+    # gui
+    p_gui = sub.add_parser(
+        "gui", help="Launch the graphical interface (Tkinter)"
+    )
+    p_gui.set_defaults(func=cmd_gui)
+
     # config
     p_cfg = sub.add_parser(
         "config", help="Show config paths and validate"
@@ -571,6 +696,25 @@ def main(argv: Optional[List[str]] = None) -> int:
             "Simulate the migration without "
             "downloading or uploading anything"
         ),
+    )
+    p_mig.add_argument(
+        "--select",
+        action="store_true",
+        help=(
+            "Choose which albums to migrate, grouped by user (one tab per "
+            "user), and remember the selection"
+        ),
+    )
+    p_mig.add_argument(
+        "--all-albums",
+        action="store_true",
+        help="Migrate all albums (override a saved selection for this run)",
+    )
+    p_mig.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Skip the confirmation screen and start migrating right away",
     )
     p_mig.add_argument(
         "-v", "--verbose", action="store_true"
@@ -615,6 +759,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         "reset", help="Reset checkpoint"
     )
     p_rs.set_defaults(func=cmd_reset)
+
+
+    # v1.1.0 commands
+    p_doc = sub.add_parser("doctor", help="Run system diagnostic")
+    p_doc.set_defaults(func=cmd_doctor)
+
+    p_st2 = sub.add_parser("stats2", help="Detailed Immich + checkpoint stats")
+    p_st2.add_argument("--json", action="store_true", help="JSON output")
+    p_st2.set_defaults(func=cmd_stats)
+
+    add_checkpoints_subcommands(sub)
 
     args = parser.parse_args(argv)
     return args.func(args)

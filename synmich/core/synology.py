@@ -1,12 +1,21 @@
 """Client Synology Photos API."""
 
 import json
+import logging
 import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
+from synmich.core.synology_auth import (
+    login_with_2fa,
+    cli_otp_prompt,
+    fetch_user_id,
+    OTPRequired,
+    LoginFailed,
+)
+
 import urllib3
 
 urllib3.disable_warnings()
@@ -68,35 +77,53 @@ class SynologyClient:
                     time.sleep(self.retry_backoff_s * i)
         raise last
 
-    def login(self, username: str, password: str) -> bool:
-        """Login to Synology Photos. Returns True on success."""
-        session = requests.Session()
+    def login(self, username: str, password: str, otp_provider=None) -> bool:
+        """Synology login with 2FA support (v1.0.4).
 
-        def _do():
-            return session.post(
-                f"{self.base_url}/webapi/auth.cgi",
-                data={
-                    "api": "SYNO.API.Auth",
-                    "version": "6",
-                    "method": "login",
-                    "account": username,
-                    "passwd": password,
-                    "session": "SynoPhoto",
-                    "format": "sid",
-                },
-                verify=self.verify_ssl,
-                timeout=self.timeout,
+        If the account has 2FA enabled, otp_provider is called to enter
+        the OTP. Default: CLI prompt via click.
+
+        The returned device_token is saved (~/.config/synmich/
+        device_tokens.json, 600) to skip the OTP on future
+        connections as long as Synology considers the device trusted.
+        """
+        if otp_provider is None:
+            otp_provider = cli_otp_prompt
+
+        # v1.0.4 fix: create session if needed
+        if self.session is None:
+            import requests
+            self.session = requests.Session()
+
+        try:
+            self.sid = login_with_2fa(
+                session=self.session,
+                base_url=self.base_url,
+                username=username,
+                password=password,
+                verify_ssl=self.verify_ssl,
+                otp_provider=otp_provider,
             )
-
-        r = self._retry(_do)
-        d = r.json()
-        if not d.get("success"):
+            self.username = username
+            self._password = password
+            # v1.1.0 fix: re-populate user_id right after auth. The v1.0.4
+            # 2FA rewrite dropped this; without it the Migrator's
+            # syno_id_to_session owner mapping misses and albums are marked
+            # done with 0 items uploaded.
+            self.user_id = fetch_user_id(
+                self.session, self.base_url, self.sid, self.verify_ssl
+            )
+            if self.user_id is None:
+                logging.getLogger("synmich").warning(
+                    "Synology: user_id unavailable after login for %s "
+                    "(SYNO.Foto.UserInfo/me failed)",
+                    username,
+                )
+            return True
+        except (LoginFailed, OTPRequired) as e:
+            logging.getLogger("synmich").error("Synology login failed: %s", e)
             return False
 
-        self.session = session
-        self.sid = d["data"]["sid"]
-        self.username = username
-        return True
 
     def logout(self) -> None:
         if self.session and self.sid:
@@ -150,22 +177,20 @@ class SynologyClient:
 
         return self._retry(_do)
 
-    def me(self) -> int:
-        """Return the syno_user_id of the logged-in user."""
-        if self.user_id is not None:
-            return self.user_id
-        r = self._api_get("SYNO.Foto.UserInfo", "me", "1")
-        data = r.json().get("data", {})
-        # 'id' can be at different depths depending on DSM
-        self.user_id = data.get("id")
-        if self.user_id is None:
-            # fallback: chercher dans la structure
-            user = data.get("user") or {}
-            self.user_id = user.get("id")
+    def me(self) -> Optional[int]:
+        """Return the syno_user_id of the logged-in user (cached).
+
+        login() populates user_id at auth time; this is the lazy
+        fallback if it's still unset (e.g. user_id was cleared).
+        """
+        if self.user_id is None and self.sid and self.session:
+            self.user_id = fetch_user_id(
+                self.session, self.base_url, self.sid, self.verify_ssl
+            )
         return self.user_id
 
     def list_albums(self) -> List[Dict[str, Any]]:
-        """Liste tous les albums visibles avec sharing_info."""
+        """List all visible albums with sharing_info."""
         all_albums = []
         offset = 0
         while True:

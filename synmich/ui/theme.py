@@ -33,7 +33,7 @@ BANNER_ASCII = r"""
 
 
 def _gradient_banner() -> Text:
-    """Bannière ASCII colorée avec gradient bleu→cyan."""
+    """Colored ASCII banner with a blue→cyan gradient."""
     text = Text()
     lines = BANNER_ASCII.strip("\n").split("\n")
     # Simulated gradient: alternating blue and bright_cyan
@@ -56,7 +56,7 @@ def print_banner(subtitle_extra: str = "") -> None:
     console.print()
     console.print(_gradient_banner(), end="")
 
-    # Sous-titre
+    # Subtitle
     subtitle = Text()
     subtitle.append("         ", style="")
     subtitle.append("Synology Photos", style="bold white")

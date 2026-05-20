@@ -123,6 +123,20 @@ def safe_name(name: str) -> str:
     return cleaned[:200] if cleaned else "unnamed"
 
 
+def album_key(owner_name: str, album: Dict[str, Any]) -> str:
+    """Stable key identifying an album for selection and dedup.
+
+    Uses the real `passphrase` when it exists (shared albums: stable and
+    identical on the owner and recipient sides), otherwise a local key
+    `local-<owner>-<id>` for personal, non-shared albums.
+
+    The selector (ui.album_selector) and run_albums MUST use this same
+    function, otherwise the keys saved in selected_albums would not match
+    the ones tested at migration time.
+    """
+    return album.get("passphrase") or f"local-{owner_name}-{album['id']}"
+
+
 class Migrator:
     """Orchestrateur de migration."""
 
@@ -159,6 +173,7 @@ class Migrator:
         )
 
         # Shared albums mode: link | duplicate | ignore
+        # (the "how", for SHARED albums only)
         self.shared_albums_mode = mig.get(
             "shared_albums_mode", "link"
         )
@@ -168,6 +183,18 @@ class Migrator:
             "ignore",
         ):
             self.shared_albums_mode = "link"
+
+        # Albums mode: all | select  (the "what": which albums to migrate)
+        # Independent axis from shared_albums_mode. In select mode, only the
+        # albums whose key (see album_key) is in selected_albums are
+        # migrated; the include/exclude regex is then ignored (the
+        # interactive selection wins).
+        self.albums_mode = mig.get("albums_mode", "all")
+        if self.albums_mode not in ("all", "select"):
+            self.albums_mode = "all"
+        self.selected_albums = set(
+            mig.get("selected_albums", []) or []
+        )
 
         self.include_shared_space = bool(
             mig.get("include_shared_space", True)
@@ -223,6 +250,10 @@ class Migrator:
         self.stats.log_message(msg)
 
     def _filter_album(self, name: str) -> bool:
+        # In select mode the selection (applied in run_albums) wins:
+        # we don't additionally apply the include/exclude regex.
+        if self.albums_mode == "select":
+            return True
         if (
             self.exclude_re
             and self.exclude_re.search(name)
@@ -421,8 +452,9 @@ class Migrator:
 
         if not owner:
             self._log(
-                f"⚠ {name}: owner_syno_id="
-                f"{owner_syno_id} not mapped"
+                f"⚠ Skipping album \"{name}\": its owner (Synology user "
+                f"id {owner_syno_id}) isn't part of this migration. "
+                f"Add that user to your config to migrate this album."
             )
             return
 
@@ -746,10 +778,12 @@ class Migrator:
                         break
 
             if not target:
+                who = syno_name or f"Synology user (db_id={db_id})"
                 self._log(
-                    f"   ⚠ Share: user "
-                    f"'{syno_name}' (db_id={db_id}) "
-                    f"not mapped"
+                    f"   ⚠ Shared on Synology with \"{who}\", who isn't "
+                    f"part of this migration — the album won't be shared "
+                    f"with them in Immich. Add them as a user in your "
+                    f"config to replicate the share."
                 )
                 continue
 
@@ -818,8 +852,17 @@ class Migrator:
             for fut in as_completed(futures):
                 try:
                     asset_id, name = fut.result()
-                except Exception:
+                except Exception as e:
+                    # Don't swallow this silently anymore: an exception here
+                    # (e.g. a checkpoint API mismatch) used to surface as
+                    # "0 uploaded, 0 failed" while assets were actually being
+                    # sent to Immich. Log it and mark the failure.
                     asset_id, name = None, ""
+                    item = futures[fut]
+                    self._log(
+                        f"✖ {item.get('filename')}: {e}"
+                    )
+                    self.stats.failed += 1
                 if asset_id:
                     uploaded_by_uploader.setdefault(
                         name, []
@@ -836,6 +879,10 @@ class Migrator:
         # Collect unique albums by passphrase
         seen = set()
         all_albums = []
+        excluded_shared = 0  # shared albums not selected (select mode)
+        timeline_off = not self.config.get("migration", {}).get(
+            "include_timeline", True
+        )
         for session in self.sessions:
             try:
                 albums = session.syno.list_albums()
@@ -848,19 +895,48 @@ class Migrator:
                 f"📚 {session.name}: {len(albums)} albums"
             )
             for a in albums:
-                pp = (
-                    a.get("passphrase")
-                    or f"local-{session.name}-{a['id']}"
-                )
+                pp = album_key(session.name, a)
                 if pp in seen:
                     continue
                 seen.add(pp)
+                # Select mode: keep only the chosen albums.
+                if (
+                    self.albums_mode == "select"
+                    and pp not in self.selected_albums
+                ):
+                    # A SHARED album not selected + timeline OFF => some
+                    # contributor photos won't be migrated anywhere. Count
+                    # them for a single summary line (see below).
+                    if timeline_off:
+                        sharing = (
+                            a.get("additional", {}).get(
+                                "sharing_info", {}
+                            )
+                            or {}
+                        )
+                        if bool(a.get("shared")) or bool(
+                            sharing.get("permission")
+                        ):
+                            excluded_shared += 1
+                    continue
                 all_albums.append(a)
 
         self.stats.albums_total = len(all_albums)
-        self._log(
-            f"📚 Unique albums total: {len(all_albums)}"
-        )
+        if self.albums_mode == "select":
+            self._log(
+                f"📚 Select mode: {len(all_albums)} album(s) "
+                f"selected to migrate"
+            )
+            if excluded_shared:
+                self._log(
+                    f"⚠ {excluded_shared} shared album(s) not selected: "
+                    f"their photos will not be migrated "
+                    f"(timeline disabled)"
+                )
+        else:
+            self._log(
+                f"📚 Unique albums total: {len(all_albums)}"
+            )
 
         for album in all_albums:
             if not self.control.check():

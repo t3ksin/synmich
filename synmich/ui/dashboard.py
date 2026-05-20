@@ -262,14 +262,58 @@ class MigrationApp(App):
         self.run_worker(self._run_migration, thread=True)
 
     def _run_migration(self) -> None:
+        crashed = None
         try:
             self.migrate_callable()
         except Exception as e:
+            crashed = str(e)
             self.stats.log_message(
                 f"[red]✖ Migration crashed: {e}[/]"
             )
         finally:
             self.stats.current_step = "done"
+            # CLEAR ending: worker thread -> hop back onto the UI thread.
+            self.call_from_thread(self._on_done, crashed)
+
+    def _on_done(self, crashed=None) -> None:
+        """Show an unambiguous end-of-migration state."""
+        s = self.stats
+        if crashed:
+            self.sub_title = "✖ FAILED — press q to quit"
+            self.stats.log_message(
+                f"[bold red]✖ MIGRATION FAILED[/]: {crashed}. "
+                f"Press [bold]q[/] to quit."
+            )
+            sev = "error"
+        else:
+            ok = s.failed == 0
+            self.sub_title = "✅ DONE — press q to quit"
+            failed_txt = (
+                f"[red]{s.failed} failed[/]" if s.failed else "0 failed"
+            )
+            self.stats.log_message(
+                "[bold green]══════════════════════════════════════[/]"
+            )
+            self.stats.log_message(
+                f"[bold green]✅ MIGRATION COMPLETE[/] — "
+                f"[green]{s.uploaded} uploaded[/], "
+                f"{s.duplicate} duplicate(s), {failed_txt}, "
+                f"{s.albums_done} album(s). "
+                f"Press [bold]q[/] to quit."
+            )
+            self.stats.log_message(
+                "[bold green]══════════════════════════════════════[/]"
+            )
+            sev = "information" if ok else "warning"
+        try:
+            self.notify(
+                "Migration complete ✅" if not crashed
+                else "Migration failed ✖",
+                severity=sev,
+                timeout=10,
+            )
+        except Exception:
+            pass
 
     def action_pause(self) -> None:
         if self.control.is_paused():

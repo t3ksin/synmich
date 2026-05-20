@@ -49,6 +49,8 @@ synmich_backup/
 backup/
 migration.log
 migration_checkpoint.json
+checkpoint.json
+device_tokens.json
 config.yaml
 console.log
 test_*.py

@@ -141,6 +141,18 @@ class ImmichClient:
 
         return self._retry(_do)
 
+    def rename_album(self, album_id: str, name: str) -> bool:
+        def _do():
+            return requests.patch(
+                f"{self.base_url}/albums/{album_id}",
+                headers=self._headers({"Content-Type": "application/json"}),
+                json={"albumName": name},
+                timeout=self.timeout,
+            )
+
+        r = self._retry(_do)
+        return r.status_code in (200, 201)
+
     def delete_album(self, album_id: str) -> bool:
         def _do():
             return requests.delete(

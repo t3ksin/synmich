@@ -45,6 +45,15 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "migration": {
         "include_albums": True,
         "include_timeline": True,
+        # Which albums to migrate:
+        #   all    - every album (default; still filtered by
+        #            filters.include_albums_regex if set)
+        #   select - only the albums chosen interactively, stored in
+        #            selected_albums below (see `synmich migrate --select`)
+        "albums_mode": "all",
+        # Passphrases (or local-<user>-<id> keys) of the albums to migrate
+        # when albums_mode == "select". Filled by the interactive selector.
+        "selected_albums": [],
         # How to handle shared Synology albums:
         #   link      - one shared album in Immich, preserves owner +
         #               cross-user permissions (default, recommended)
@@ -143,6 +152,14 @@ def validate_config(data: Dict[str, Any]) -> List[str]:
         errors.append(
             f"migration.shared_albums_mode='{sam}' "
             f"must be 'link', 'duplicate', or 'ignore'"
+        )
+
+    # Validate albums_mode (which albums to migrate)
+    am = mig.get("albums_mode", "all")
+    if am not in ("all", "select"):
+        errors.append(
+            f"migration.albums_mode='{am}' "
+            f"must be 'all' or 'select'"
         )
 
     if mig.get("include_shared_space"):

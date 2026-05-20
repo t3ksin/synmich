@@ -64,8 +64,13 @@ SHARED_TO_INTERNAL = {n: v for n, v, _ in SHARED_MODES}
 INTERNAL_TO_SHARED = {v: n for n, v, _ in SHARED_MODES}
 
 
+# Readable UI font for the whole GUI. Falls back to the Tk default if the
+# family isn't installed. Easy to swap (e.g. "Noto Sans", "Cantarell").
+FONT_FAMILY = "Inter"
+
+
 def font(size=13, weight="normal"):
-    return ctk.CTkFont(size=size, weight=weight)
+    return ctk.CTkFont(family=FONT_FAMILY, size=size, weight=weight)
 
 
 def card(parent, title=None):

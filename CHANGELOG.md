@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.4] - 2026-05-20
+
+### Fixed
+
+- GUI: the 2FA code field now grabs focus on the **first** prompt, so the code
+  can be typed immediately (previously it only worked on a second prompt).
+
 ## [2.0.3] - 2026-05-20
 
 ### Changed

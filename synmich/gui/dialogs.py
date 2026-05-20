@@ -265,7 +265,6 @@ def prompt_otp(parent, username: str) -> str | None:
     dlg.geometry("430x310")
     dlg.transient(parent)
     dlg.lift()
-    dlg.after(150, dlg.grab_set)
 
     ctk.CTkLabel(dlg, text="Two-factor authentication",
                  font=W.font(17, "bold"), text_color=W.GREEN).pack(pady=(22, 4))
@@ -286,7 +285,20 @@ def prompt_otp(parent, username: str) -> str | None:
 
     entry.bind("<Return>", lambda _e: ok())
     W.primary_button(dlg, "Validate", ok).pack(pady=6)
-    dlg.after(300, entry.focus)
+
+    def _grab_and_focus():
+        # On the first open the new toplevel often doesn't hold the WM's
+        # keyboard focus, so a plain entry.focus() does nothing. focus_force()
+        # pulls focus to the dialog, then we put the cursor in the code field.
+        try:
+            dlg.grab_set()
+        except Exception:  # noqa: BLE001
+            pass
+        dlg.lift()
+        dlg.focus_force()
+        entry.focus_set()
+
+    dlg.after(200, _grab_and_focus)
     W.fix_wrapping(dlg)
     parent.wait_window(dlg)
     return out.get("code") or None

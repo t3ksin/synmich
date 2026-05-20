@@ -9,12 +9,15 @@
    ╚══════╝   ╚═╝   ╚═╝  ╚═══╝╚═╝     ╚═╝╚═╝ ╚═════╝╚═╝  ╚═╝
 </pre>
 
-**Migrate Synology Photos to Immich, properly — albums, sharing and all.**
+### Migrate Synology Photos to Immich, properly — albums, sharing and all.
 
-![version](https://img.shields.io/badge/version-2.0.0-1D9E75)
+![version](https://img.shields.io/badge/version-2.0.1-1D9E75)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![python](https://img.shields.io/badge/python-3.9%2B-3776AB)
+![platform](https://img.shields.io/badge/GUI%20%2B%20CLI-1e2a36)
 ![stars](https://img.shields.io/github/stars/t3ksin/synmich?style=social)
+
+<br>
 
 <img src="docs/screenshots/gui-immich.png" alt="synmich — the graphical app" width="880">
 
@@ -22,11 +25,11 @@
 
 ---
 
-## Why synmich
+## 🎯 Why synmich
 
 Moving off Synology Photos usually means losing the parts that matter: your **albums**, **who they were shared with**, and the **per-user libraries**. Most tools dump a flat pile of files into one account and call it a day.
 
-synmich migrates **each Synology user into their own Immich account**, recreates their albums, and preserves shared albums the way Synology had them — mirror the sharing, give everyone their own copy, or skip sharing entirely. Photos are deduplicated by **SHA1**, the run is **resumable**, and your **Synology NAS is never modified** (read-only). And it ships with a **real graphical app**, not just a CLI.
+Instead, synmich migrates **each Synology user into their own Immich account**, recreates their albums, and preserves shared albums the way Synology had them — mirror the sharing, give everyone their own copy, or skip sharing entirely. Photos are deduplicated by **SHA1**, the run is **resumable**, and your **Synology NAS is never modified** (read-only). Best of all, it ships with a **real graphical app**, not just a CLI.
 
 > Tested in production: **67,844 photos** migrated successfully, every asset validated via SHA1 checksum.
 
@@ -42,11 +45,11 @@ synmich migrates **each Synology user into their own Immich account**, recreates
 | Graphical interface | ❌ | ✅ web | ✅ desktop |
 | License | MIT | GPL-3.0 | MIT |
 
-<sub>Based on each project's README at the time of writing — corrections welcome. [immich-go](https://github.com/simulot/immich-go) and [PhotoMigrator](https://github.com/jaimetur/PhotoMigrator) are both excellent general-purpose photo movers; synmich is specialized for multi-user Synology Photos with shared albums.</sub>
+<sub>Based on each project's README at the time of writing — corrections welcome. Both [immich-go](https://github.com/simulot/immich-go) and [PhotoMigrator](https://github.com/jaimetur/PhotoMigrator) are excellent general-purpose photo movers; synmich is the specialist for multi-user Synology Photos with shared albums.</sub>
 
 ---
 
-## The app — start here 👈
+## 🖥️ The app (start here)
 
 The graphical app is the easiest way to use synmich. One window, dark theme, no command line.
 
@@ -54,10 +57,6 @@ The graphical app is the easiest way to use synmich. One window, dark theme, no 
 pip install -e . && pip install customtkinter
 synmich gui
 ```
-
-<div align="center">
-<img src="docs/screenshots/gui-immich.png" alt="synmich GUI - Synology to Immich" width="880">
-</div>
 
 **Three operations, as tabs (top-right):**
 
@@ -68,21 +67,21 @@ synmich gui
 | **Immich Album Manager** | Browse and rename your Immich albums, grouped per user |
 
 **Left panel — Settings (always there):**
-- **Servers**: your Synology and Immich addresses (an IP with a port is fine, e.g. `192.168.0.2:5000`).
-- **Users / accounts**: managed per tab — *Synology to Immich* needs a Synology login **+** an Immich API key per user; *Synology to local* needs only the Synology login. A **Check NAS users** button lists the real users on your NAS (system accounts hidden).
+- **Servers.** Your Synology and Immich addresses (an IP with a port is fine, e.g. `192.168.0.2:5000`).
+- **Users / accounts.** Managed per tab — *Synology to Immich* needs a Synology login **plus** an Immich API key per user; *Synology to local* needs only the Synology login. A **Check NAS users** button lists the real users on your NAS (system accounts hidden).
 - **Stats / Doctor** at the bottom, and a scoped **Reset…** (progress / 2FA devices / configuration / everything — *never your photos*).
 
 **Running a migration:**
 1. Fill in the **Synology** and **Immich** addresses (left panel), then **Add user** (it tests the connection on the spot; 2FA codes are remembered).
-2. Pick the options: **All albums** or **Specific albums**, the **shared-albums** mode (`mirror-syno` = keep Synology's sharing, `separate` = a copy per user, `skip`), and whether to include each user's **full timeline**.
+2. Pick your options: **All albums** or **Specific albums**, the **shared-albums** mode (`mirror-syno` = keep Synology's sharing, `separate` = a copy per user, `skip`), and whether to include each user's **full timeline**.
 3. In *Specific albums*, the list is split into **one sub-tab per user**, with **Check all / Uncheck all**, a live count, and a *shared with …* badge on shared albums.
-4. Hit **START MIGRATION** and watch the live counters (uploaded / duplicate / failed), the progress bar and the log. **Pause** or **Stop** any time — it's resumable.
+4. Hit **START MIGRATION** and watch the live counters (uploaded / duplicate / failed), the progress bar and the log. **Pause** or **Stop** any time — it's fully resumable.
 
 > Tip: the window opens at a comfortable size and adapts to smaller screens. Everything is read-only on the Synology side.
 
 ---
 
-## Quick start
+## ⚡ Quick start
 
 ```bash
 git clone https://github.com/t3ksin/synmich.git
@@ -95,22 +94,21 @@ synmich init                                      # terminal wizard, then migrat
 
 ---
 
-## Features
+## ✨ Features
 
-- ✅ **Graphical app** (`synmich gui`) — dark, beginner-friendly, per-user album tabs, live progress, Doctor & Reset built in
-- ✅ **Multi-user migration** — each Synology user goes to their own Immich account
-- ✅ **Shared albums, your way** — `mirror-syno` (same sharing), `separate` (a copy per user), or `skip`
-- ✅ **Albums + timeline** — migrate the full library or just the albums
-- ✅ **Local backup** — download Synology albums to a folder (Synology → local)
-- ✅ **Resumable** — a checkpoint tracks progress; re-run any time without re-uploading
-- ✅ **SHA1 deduplication** — already-present photos are detected and skipped
-- ✅ **2FA support** — device tokens are remembered so you enter the code once
-- ✅ **Doctor** — diagnoses servers, accounts, disk space and config in one go
-- ✅ **Safe by design** — the Synology NAS is only ever read, never written
+- 🖥️ **Graphical app** — `synmich gui` opens a dark, beginner-friendly window: add your users, pick your options, hit **Start**, and watch live progress. No command line required.
+- 👥 **Multi-user migration** — every Synology user is migrated into *their own* Immich account, in a single run.
+- 🤝 **Shared albums, your way** — keep Synology's exact sharing (`mirror-syno`), give each user their own copy (`separate`), or skip sharing (`skip`). Owners and members are preserved either way.
+- 🗂️ **Albums + timeline** — bring over the full library, just the albums, or hand-pick specific albums per user.
+- 💾 **Local backup** — download a user's Synology albums straight to a folder (Synology → local), no Immich needed.
+- 🔐 **2-factor authentication (2FA)** — if an account uses Synology's 2-step verification, synmich asks for the code **once**, then stores a **trusted device token** (exactly like your browser does) so future runs never prompt again. Tokens stay only on your machine and can be wiped from **Reset → 2FA devices**.
+- ♻️ **Resumable & deduplicated** — a checkpoint records every item, and photos already in Immich are matched by **SHA1** and skipped. Stop and re-run any time, no duplicates.
+- 🩺 **Doctor** — one command checks your servers, accounts, free disk space and config, with a clear ✓ / ✗ for each.
+- 🔒 **Safe by design** — the Synology NAS is only ever **read**, never modified.
 
 ---
 
-## Installation
+## 📦 Installation
 
 ```bash
 git clone https://github.com/t3ksin/synmich.git
@@ -119,11 +117,11 @@ pip install -e .
 pip install customtkinter      # only needed for `synmich gui`
 ```
 
-**Requirements:** Python 3.9+, a reachable Synology Photos instance, and an Immich server with one API key per user.
+**Requirements.** Python 3.9+, a reachable Synology Photos instance, and an Immich server with one API key per user.
 
 ---
 
-## Configuration
+## ⚙️ Configuration
 
 The wizard writes the config for you (and chains straight into a first migration):
 
@@ -161,9 +159,9 @@ migration:
 
 ---
 
-## CLI (for power users)
+## ⌨️ CLI (for power users)
 
-Prefer the terminal, or scripting/cron? Everything is available on the command line too, with a live dashboard:
+Prefer the terminal, or scripting / cron? Everything is available on the command line too, with a live dashboard.
 
 <div align="center">
 <img src="docs/screenshots/cli-immich.png" alt="synmich CLI live dashboard" width="860">
@@ -197,7 +195,7 @@ synmich migrate --dry-run       # simulate: nothing downloaded or uploaded
 
 ---
 
-## Architecture
+## 🧭 Architecture
 
 ```mermaid
 flowchart LR
@@ -225,9 +223,9 @@ For each user, synmich logs into Synology, enumerates albums and their sharing, 
 
 ---
 
-## Real-world results
+## 📊 Real-world results
 
-synmich was built to move a real, messy, decade-old library and is validated against it:
+Built to move a real, messy, decade-old library, synmich is validated against it:
 
 - **67,844 photos** migrated successfully
 - Every asset **validated via SHA1** before being counted as done
@@ -236,7 +234,7 @@ synmich was built to move a real, messy, decade-old library and is validated aga
 
 ---
 
-## Roadmap
+## 🗺️ Roadmap
 
 - [ ] Google Takeout import (bring legacy Google Photos in alongside Synology)
 - [ ] Scheduled / incremental sync
@@ -247,7 +245,7 @@ Shipped in 2.0: the **GUI**, **local backup**, **shared-album modes**, **2FA dev
 
 ---
 
-## Contributing
+## 🤝 Contributing
 
 ```bash
 git clone https://github.com/t3ksin/synmich.git
@@ -264,6 +262,6 @@ The codebase splits cleanly into `core/` (Synology + Immich clients, the migrato
 
 ---
 
-## License
+## 📄 License
 
 [MIT](LICENSE) © synmich contributors

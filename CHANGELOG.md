@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.0.1] - 2026-05-20
+
+### Changed
+
+- GUI: the three main tabs are now spaced apart and use a distinct colour, so
+  they clearly read as the app's primary navigation.
+
+### Docs
+
+- README: richer Features with a fuller 2FA explanation, PhotoMigrator added to
+  the comparison, centered logo, and capitalization/wording polish.
+
 ## [2.0.0] - 2026-05-20
 
 ### Major release: graphical app + local backup

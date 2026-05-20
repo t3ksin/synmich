@@ -109,11 +109,13 @@ class SynmichApp(ctk.CTk):
         # RIGHT = operation tabs (top)
         self.tabview = ctk.CTkTabview(
             self, corner_radius=0, fg_color=W.CONTENT,
-            segmented_button_fg_color=W.SIDEBAR,
+            segmented_button_fg_color=W.CONTENT,
             segmented_button_selected_color=W.GREEN,
             segmented_button_selected_hover_color=W.GREEN_DK,
-            segmented_button_unselected_color=W.CARD,
-            segmented_button_unselected_hover_color=W.HOVER,
+            # Distinct slate (lighter than the content/cards) so the 3 main
+            # tabs clearly read as the app's primary navigation.
+            segmented_button_unselected_color="#3a4d62",
+            segmented_button_unselected_hover_color="#46627f",
             text_color="white")
         self.tabview.grid(row=0, column=1, sticky="nsew")
         self.migration_view = MigrationView(self.tabview.add(TAB_IMMICH), self)
@@ -124,13 +126,17 @@ class SynmichApp(ctk.CTk):
         self.albums_view.pack(fill="both", expand=True)
         self.tabview.set(TAB_IMMICH)
         # Make the 3 main tabs stand out: taller, bolder, brand-green when
-        # active (these are the primary navigation of the whole app).
+        # active, and clearly spaced apart (these are the app's primary nav).
         try:
-            self.tabview._segmented_button.configure(
-                font=W.font(16, "bold"), height=46, corner_radius=0,
-                border_width=0)
-            # A touch of padding around the tab row so it reads as a header.
-            self.tabview._segmented_button.grid_configure(pady=(6, 8), padx=8)
+            sb = self.tabview._segmented_button
+            # fg_color = content bg, so the gaps between tabs show the dark
+            # background and each tab reads as a separate button.
+            sb.configure(font=W.font(16, "bold"), height=46, corner_radius=0,
+                         border_width=0, fg_color=W.CONTENT)
+            for btn in sb._buttons_dict.values():
+                btn.configure(corner_radius=0)
+                btn.grid_configure(padx=6)
+            sb.grid_configure(pady=(6, 10), padx=8)
         except Exception:  # noqa: BLE001
             pass
 

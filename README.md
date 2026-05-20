@@ -79,10 +79,19 @@ synmich gui
 ```bash
 git clone https://github.com/t3ksin/synmich.git
 cd synmich
-pip install -e . && pip install customtkinter   # customtkinter = the GUI
-synmich gui                                       # the app (recommended)
-# — or —
-synmich init                                      # terminal wizard, then migrate
+pip install -e ".[gui]"
+```
+
+**👉 Recommended — the graphical app:**
+
+```bash
+synmich gui
+```
+
+**Or the terminal wizard** (interactive setup, then migrate):
+
+```bash
+synmich init
 ```
 
 ---

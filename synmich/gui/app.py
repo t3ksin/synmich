@@ -24,7 +24,7 @@ from synmich.gui.views.migration import MigrationView
 from synmich.gui.views.settings import SettingsView
 from synmich.gui.wizard_modal import FirstLaunchWizard
 
-_VER = __version__  # full version, e.g. "2.0.0"
+_VER = __version__  # full version string shown in the title / brand
 TAB_IMMICH = "Synology to Immich"
 TAB_LOCAL = "Synology to local"
 TAB_ALBUMS = "Immich Album Manager"

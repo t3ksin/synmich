@@ -80,6 +80,7 @@ synmich gui
 git clone https://github.com/t3ksin/synmich.git
 cd synmich
 python3 -m venv .venv && source .venv/bin/activate   # Windows: py -m venv .venv && .venv\Scripts\activate
+python3 -m pip install --upgrade pip setuptools wheel
 pip install -e ".[gui]"
 ```
 
@@ -135,8 +136,12 @@ cd synmich
 **3. Install** (the `gui` extra pulls in customtkinter + Pillow for `synmich gui`)
 
 ```bash
+python3 -m pip install --upgrade pip setuptools wheel   # editable installs need pip >= 21.3
 pip install -e ".[gui]"
 ```
+
+> If you see **"neither 'setup.py' nor 'setup.cfg' found"**, your `pip` is too
+> old for editable installs — the upgrade line above fixes it.
 
 > On **macOS**, if `pip` or `python3` aren't found, install Python from
 > [python.org](https://www.python.org/downloads/) (it bundles Tk **and** pip),

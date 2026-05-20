@@ -71,8 +71,8 @@ The graphical app is the easiest way to use synmich — one window, dark theme, 
 
 ## ⚡ Quick start
 
-Linux, macOS & Windows · **Python 3.9+** · a Synology Photos instance + an
-Immich server (one API key per user).
+**Prerequisites** — Linux, macOS or Windows · **Python 3.9+** · a reachable
+Synology Photos instance · an Immich server with one API key per user.
 
 ```bash
 git clone https://github.com/t3ksin/synmich.git

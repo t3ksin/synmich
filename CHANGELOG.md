@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.2] - 2026-05-20
+
+### Changed
+
+- GUI now uses the **Inter** font for better readability (configurable via
+  `FONT_FAMILY` in `widgets.py`, with a Tk-default fallback).
+
+### Docs
+
+- README logo is now a blue->cyan gradient image matching the CLI banner.
+
 ## [2.0.1] - 2026-05-20
 
 ### Changed

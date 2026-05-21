@@ -36,7 +36,7 @@ Instead, synmich migrates **each Synology user into their own Immich account**, 
 | Synology **Shared Space** | ❌ | ❌ | ✅ |
 | **2FA** on the Synology source | ❌ | ✅ | ✅ |
 | Graphical interface | ❌ | ✅ web | ✅ desktop |
-| License | MIT | GPL-3.0 | MIT |
+| License | AGPL-3.0 | GPL-3.0 | MIT |
 
 <sub>Based on each project's README at the time of writing — corrections welcome. Both [immich-go](https://github.com/simulot/immich-go) and [PhotoMigrator](https://github.com/jaimetur/PhotoMigrator) are excellent general-purpose photo movers; synmich is the specialist for multi-user Synology Photos with shared albums.</sub>
 

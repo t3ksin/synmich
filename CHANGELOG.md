@@ -13,6 +13,10 @@
 - **Colour-coded top tabs.** The three main tabs each have their own colour
   (green = Synology to Immich, blue = Synology to local, amber = Immich Album
   Manager) so the modes read as distinct at a glance.
+- **Reliable long migrations.** Each user's Synology session is now kept alive
+  for the whole run — a background thread pings every 30 min and silently
+  re-logs in (via the saved device token) if the session expires — so
+  multi-hour migrations don't fail on a Synology session timeout.
 
 ### Changed
 

@@ -1016,18 +1016,59 @@ class Migrator:
             )
             self.checkpoint.save()
 
+    def _start_keepalives(self):
+        """Keep each user's Synology session alive for the whole migration.
+
+        A Synology SID expires after ~60 min idle or ~6 h max lifetime. For
+        long runs, a background thread per user pings every 30 min and, if the
+        session has expired, silently re-logs in via the saved device token.
+        Returns the started keepalives so run() can stop them at the end."""
+        from synmich.core.synology_keepalive import SynologyKeepalive
+
+        creds: Dict[str, Any] = {}
+        for u in self.config.get("users", []):
+            pair = (u.get("syno_username", ""), u.get("syno_password", ""))
+            for key in (u.get("name"), u.get("syno_username")):
+                if key:
+                    creds[key] = pair
+
+        keepalives = []
+        for s in self.sessions:
+            user, pw = creds.get(s.name, ("", ""))
+            if not user or not pw:
+                continue
+            try:
+                ka = SynologyKeepalive(
+                    client=s.syno, username=user, password=pw,
+                    ping_interval_seconds=1800)
+                ka.start()
+                keepalives.append(ka)
+            except Exception:  # noqa: BLE001
+                pass
+        return keepalives
+
+    def _stop_keepalives(self, keepalives) -> None:
+        for ka in keepalives:
+            try:
+                ka.stop()
+            except Exception:  # noqa: BLE001
+                pass
+
     def run(self) -> None:
         """Run full migration based on config."""
         mig = self.config.get("migration", {})
+        keepalives = self._start_keepalives()
+        try:
+            if mig.get("include_albums", True):
+                self.run_albums()
 
-        if mig.get("include_albums", True):
-            self.run_albums()
+            if (
+                mig.get("include_timeline", True)
+                and self.control.check()
+            ):
+                self.run_timeline()
 
-        if (
-            mig.get("include_timeline", True)
-            and self.control.check()
-        ):
-            self.run_timeline()
-
-        self.stats.current_step = "done"
-        self.checkpoint.save()
+            self.stats.current_step = "done"
+            self.checkpoint.save()
+        finally:
+            self._stop_keepalives(keepalives)

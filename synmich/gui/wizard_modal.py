@@ -14,7 +14,7 @@ class FirstLaunchWizard(ctk.CTkToplevel):
         self.app = app
         self.cfg = app.cfg
         self.title("Welcome to synmich")
-        self.geometry("540x600")
+        self.geometry("540x660")
         self.transient(app)
         self.after(120, self.grab_set)  # grab after the window is mapped
 
@@ -32,6 +32,11 @@ class FirstLaunchWizard(ctk.CTkToplevel):
         self.e_suser = self._field("Synology username")
         self.e_spass = self._field("Synology password", secret=True)
         self.e_key = self._field("Immich API key", secret=True)
+        ctk.CTkLabel(self, text="This must be the API key of THIS user's own "
+                     "Immich account - their Synology photos are migrated into "
+                     "it.", text_color=W.ORANGE, font=W.font(10),
+                     wraplength=480, justify="left", anchor="w").pack(
+            fill="x", padx=26, pady=(0, 4))
 
         self.err = ctk.CTkLabel(self, text="", text_color=W.RED)
         self.err.pack(pady=(6, 0))

@@ -29,6 +29,14 @@ TAB_IMMICH = "Synology to Immich"
 TAB_LOCAL = "Synology to local"
 TAB_ALBUMS = "Immich Album Manager"
 
+# Per-mode tab colours so the three top tabs read as three distinct modes.
+# Each entry is (active bright colour, inactive dim, inactive hover).
+TAB_COLORS = {
+    TAB_IMMICH: ("#1D9E75", "#1c5a46", "#227a5d"),   # green  - migrate to Immich
+    TAB_LOCAL:  ("#3d82d1", "#274d77", "#356a9e"),   # blue   - local backup
+    TAB_ALBUMS: ("#EF9F27", "#7a5a26", "#a87b2f"),   # amber  - album manager
+}
+
 
 def _default_cfg():
     return {
@@ -43,6 +51,16 @@ class SynmichApp(ctk.CTk):
         super().__init__()
         ctk.set_appearance_mode("dark")
         self.title(f"synmich {_VER}")
+        # App icon: the brand "S" gradient, replacing the default Tk/Python
+        # icon in the title bar and taskbar.
+        try:
+            from PIL import Image, ImageTk
+            icon_path = os.path.join(os.path.dirname(__file__), "assets",
+                                     "icon.png")
+            self._icon_img = ImageTk.PhotoImage(Image.open(icon_path))
+            self.iconphoto(True, self._icon_img)
+        except Exception:  # noqa: BLE001
+            pass
         # Comfortable windowed size (~1800x1140), but never larger than the
         # screen so it fits smaller laptops too - otherwise the WM would push
         # the bottom off-screen. Clamped to at least the minimum size.
@@ -124,13 +142,8 @@ class SynmichApp(ctk.CTk):
         # RIGHT = operation tabs (top)
         self.tabview = ctk.CTkTabview(
             self, corner_radius=0, fg_color=W.CONTENT,
+            command=self._recolor_tabs,
             segmented_button_fg_color=W.CONTENT,
-            segmented_button_selected_color=W.GREEN,
-            segmented_button_selected_hover_color=W.GREEN_DK,
-            # Distinct slate (lighter than the content/cards) so the 3 main
-            # tabs clearly read as the app's primary navigation.
-            segmented_button_unselected_color="#3a4d62",
-            segmented_button_unselected_hover_color="#46627f",
             text_color="white")
         self.tabview.grid(row=0, column=1, sticky="nsew")
         self.migration_view = MigrationView(self.tabview.add(TAB_IMMICH), self)
@@ -154,6 +167,28 @@ class SynmichApp(ctk.CTk):
             sb.grid_configure(pady=(6, 10), padx=8)
         except Exception:  # noqa: BLE001
             pass
+        self._recolor_tabs()
+
+    def _recolor_tabs(self, *_):
+        """Colour each top tab with its own mode colour: the active tab in its
+        bright brand colour, the others in a dimmed version of that colour, so
+        the three modes are visually distinct."""
+        try:
+            sb = self.tabview._segmented_button
+            active = self.tabview.get()
+        except Exception:  # noqa: BLE001
+            return
+        for name, btn in sb._buttons_dict.items():
+            col = TAB_COLORS.get(name)
+            if not col:
+                continue
+            bright, dim, hover = col
+            if name == active:
+                btn.configure(fg_color=bright, hover_color=bright,
+                              text_color="white")
+            else:
+                btn.configure(fg_color=dim, hover_color=hover,
+                              text_color="#d4dde6")
 
     def _watch_tab(self):
         try:
@@ -163,6 +198,7 @@ class SynmichApp(ctk.CTk):
         if tab and tab != self._last_tab:
             self._last_tab = tab
             self.settings.set_context(tab)
+            self._recolor_tabs()
         self.after(300, self._watch_tab)
 
     def reload(self):

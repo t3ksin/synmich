@@ -9,77 +9,104 @@ import customtkinter as ctk
 from synmich.gui import widgets as W
 
 
-def _test_account(syno_url, verify, immich_url, vals, with_immich,
+def _test_account(syno_url, verify, immich_url, vals, mode,
                   otp_provider=None):
-    """Try to log in with the given credentials. Returns (ok, message)."""
+    """Try to log in with the given credentials. Returns (ok, message).
+
+    mode: "migrate" tests Synology + Immich, "backup" tests Synology only,
+    "manage" tests the Immich API key only (no Synology login)."""
     from synmich.core.synology import SynologyClient
     from synmich.gui.widgets import normalize_url
 
     syno_url = normalize_url(syno_url)
     immich_url = normalize_url(immich_url)
-    if not syno_url:
-        return False, "Enter the Synology address or IP in Settings first."
     # With no OTP provider, a 2FA prompt fails fast instead of hanging; when
     # one is supplied (from the app), 2FA accounts can be added graphically.
     otp_provider = otp_provider or (lambda _u: "")
-    try:
-        sc = SynologyClient(syno_url, verify_ssl=verify)
-        if not sc.login(vals.get("syno_username", ""),
-                        vals.get("syno_password", ""),
-                        otp_provider=otp_provider):
-            return False, ("Synology login failed - check the username and "
-                           "password. If this account uses 2-step "
-                           "verification, enter the code when prompted.")
-    except Exception as e:  # noqa: BLE001
-        return False, f"Synology error: {e}"
 
-    if with_immich:
+    if mode in ("migrate", "backup"):
+        if not syno_url:
+            return False, "Enter the Synology address or IP in Settings first."
+        try:
+            sc = SynologyClient(syno_url, verify_ssl=verify)
+            if not sc.login(vals.get("syno_username", ""),
+                            vals.get("syno_password", ""),
+                            otp_provider=otp_provider):
+                return False, ("Synology login failed - check the username and "
+                               "password. If this account uses 2-step "
+                               "verification, enter the code when prompted.")
+        except Exception as e:  # noqa: BLE001
+            return False, f"Synology error: {e}"
+
+    if mode in ("migrate", "manage"):
         key = vals.get("immich_api_key", "")
         if not key:
-            return False, "Immich API key is required for migration."
-        if immich_url:
-            from synmich.core.immich import ImmichClient
-            try:
-                ImmichClient(immich_url, key).me()
-            except Exception:  # noqa: BLE001
-                return False, ("Immich API key invalid - check the key and "
-                               "the Immich address.")
+            return False, "Immich API key is required."
+        if not immich_url:
+            return False, "Enter the Immich address or IP in Settings first."
+        from synmich.core.immich import ImmichClient
+        try:
+            ImmichClient(immich_url, key).me()
+        except Exception:  # noqa: BLE001
+            return False, ("Immich API key invalid - check the key and the "
+                           "Immich address.")
     return True, ""
 
 
-def prompt_user(parent, existing=None, with_immich=True, syno_url="",
+def prompt_user(parent, existing=None, mode="migrate", syno_url="",
                 verify=False, immich_url="", otp_provider=None) -> dict | None:
     """Modal form to add/edit an account; tests the connection on OK.
 
-    The account is only accepted once Synology (and Immich, if with_immich)
-    log in successfully. with_immich=False hides the Immich API key field.
+    mode controls the fields and the wording:
+      "migrate" - Synology to Immich: Synology login + that user's Immich key.
+      "manage"  - Immich Album Manager: Immich API key only (no Synology).
+      "backup"  - Synology to local: Synology login only.
+    The account is only accepted once the relevant logins succeed.
     """
-    kind = "Immich account" if with_immich else "Synology account"
+    needs_syno = mode in ("migrate", "backup")
+    needs_immich = mode in ("migrate", "manage")
+
+    titles = {
+        "migrate": ("Edit user", "Add a user to migrate"),
+        "manage": ("Edit Immich user", "Add an Immich user"),
+        "backup": ("Edit Synology account", "Add a Synology account"),
+    }
+    hints = {
+        "migrate": ("Add the Synology user you want to migrate, plus that "
+                    "SAME user's Immich API key - their Synology photos are "
+                    "migrated into that Immich account."),
+        "manage": ("The Immich user whose albums you want to manage. Only "
+                   "that user's Immich API key is needed - no Synology login."),
+        "backup": ("Synology login only - no Immich key needed for local "
+                   "backup."),
+    }
+    heights = {"migrate": 520, "manage": 420, "backup": 390}
+    title = titles[mode][0 if existing else 1]
     add_label = "Save" if existing else "Add account"
+
     dlg = ctk.CTkToplevel(parent)
-    dlg.title(("Edit " if existing else "Add ") + ("an " if with_immich
-              else "a ") + kind)
-    dlg.geometry("470x460" if with_immich else "470x390")
+    dlg.title(title)
+    dlg.geometry(f"470x{heights[mode]}")
     dlg.transient(parent)
     dlg.lift()
     # Delayed grab_set: calling it immediately on a CTkToplevel greys out
     # the window (known CustomTkinter rendering bug).
     dlg.after(150, dlg.grab_set)
 
-    ctk.CTkLabel(dlg, text=("Edit " if existing else "Add ") + ("an "
-                 if with_immich else "a ") + kind,
-                 font=W.font(18, "bold"), text_color=W.GREEN).pack(pady=(18, 2))
-    hint = ("Synology login + this user's Immich API key (used to migrate "
-            "their photos to Immich)." if with_immich
-            else "Synology login only - no Immich key needed for local backup.")
-    ctk.CTkLabel(dlg, text=hint, text_color=W.MUTED, font=W.font(11),
+    ctk.CTkLabel(dlg, text=title, font=W.font(18, "bold"),
+                 text_color=W.GREEN).pack(pady=(18, 2))
+    ctk.CTkLabel(dlg, text=hints[mode], text_color=W.MUTED, font=W.font(11),
                  wraplength=420, justify="left").pack(padx=22, pady=(0, 8))
-    fields = [
-        ("Synology username", "syno_username", False),
-        ("Synology password", "syno_password", True),
-    ]
-    if with_immich:
+
+    fields = []
+    if needs_syno:
+        fields += [("Synology username", "syno_username", False),
+                   ("Synology password", "syno_password", True)]
+    if mode == "manage":
+        fields.append(("Display name", "name", False))
+    if needs_immich:
         fields.append(("Immich API key", "immich_api_key", True))
+
     entries: dict = {}
     for label, key, secret in fields:
         ctk.CTkLabel(dlg, text=label, anchor="w",
@@ -90,29 +117,46 @@ def prompt_user(parent, existing=None, with_immich=True, syno_url="",
             e.insert(0, existing[key])
         entries[key] = e
 
+    if mode == "migrate":
+        ctk.CTkLabel(
+            dlg, text="The API key must belong to this same user's Immich "
+            "account (Immich -> Account Settings -> API Keys).",
+            text_color=W.ORANGE, font=W.font(10), wraplength=420,
+            justify="left").pack(fill="x", padx=22, pady=(0, 6))
+
     status = ctk.CTkLabel(dlg, text="", text_color=W.MUTED, font=W.font(11),
                           wraplength=410, justify="left")
     status.pack(padx=22, pady=(2, 0))
     result: dict = dict(existing) if existing else {}
     btn_holder: dict = {}
+    state = {"committed": False}
 
     def ok():
         vals = {k: e.get().strip() for k, e in entries.items()}
-        if not vals.get("syno_username") or not vals.get("syno_password"):
+        if needs_syno and (not vals.get("syno_username")
+                           or not vals.get("syno_password")):
             status.configure(text="Synology username and password required.",
                              text_color=W.RED)
+            return
+        if mode == "manage" and not vals.get("name"):
+            status.configure(text="Display name required.", text_color=W.RED)
+            return
+        if needs_immich and not vals.get("immich_api_key"):
+            status.configure(text="Immich API key required.", text_color=W.RED)
             return
         btn_holder["b"].configure(state="disabled", text="Testing...")
         status.configure(text="Testing the connection...", text_color=W.MUTED)
 
         def worker():
             ok_, msg = _test_account(syno_url, verify, immich_url, vals,
-                                     with_immich, otp_provider)
+                                     mode, otp_provider)
 
             def done():
                 if ok_:
                     result.update(vals)
-                    result["name"] = vals.get("syno_username", "")
+                    if needs_syno:
+                        result["name"] = vals.get("syno_username", "")
+                    state["committed"] = True
                     dlg.destroy()
                 else:
                     btn_holder["b"].configure(state="normal", text=add_label)
@@ -128,7 +172,7 @@ def prompt_user(parent, existing=None, with_immich=True, syno_url="",
     btn_holder["b"].pack(pady=12)
     W.fix_wrapping(dlg)
     parent.wait_window(dlg)
-    return result if result.get("syno_username") else None
+    return result if state["committed"] else None
 
 
 def prompt_rename(parent, current: str, suggestion: str) -> str | None:

@@ -1,5 +1,37 @@
 # Changelog
 
+## [2.1.0] - 2026-05-21
+
+### Added
+
+- **Synology to local: full-timeline backup.** A checkbox (on by default, same
+  style as the migration tab) downloads each account's entire timeline - every
+  photo, including those in no album - into `<destination>/<user>/timeline/`,
+  after the albums.
+- **App icon.** The window / taskbar icon is now the brand "S" gradient instead
+  of the default Python icon.
+- **Colour-coded top tabs.** The three main tabs each have their own colour
+  (green = Synology to Immich, blue = Synology to local, amber = Immich Album
+  Manager) so the modes read as distinct at a glance.
+
+### Changed
+
+- **Account dialog is now per-mode.** *Synology to Immich* adds a **user to
+  migrate** (Synology login + that same user's Immich API key); the **Immich
+  Album Manager** adds an **Immich user** (Immich API key only - no Synology
+  login); *Synology to local* adds a **Synology account**. Wording and fields
+  are tailored to each, and the Immich API key is clearly described as belonging
+  to that same user's Immich account.
+- **Docs.** Simplified cross-platform install (Linux/macOS/Windows) with a
+  collapsible troubleshooting section; the tagline now mentions local backup.
+
+### Fixed
+
+- **Account changes are saved immediately.** Adding, editing or removing a
+  user/account now writes to the config right away, so a removed user no longer
+  reappears after restarting the app (previously it needed a manual "Save
+  settings"). Applies to every tab.
+
 ## [2.0.4] - 2026-05-20
 
 ### Fixed

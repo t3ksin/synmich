@@ -2,7 +2,8 @@
 
 Files are downloaded and KEPT, organized as <destination>/<user>/<album>/.
 Albums are de-duplicated. A shared-albums mode controls whether contributor
-photos are included. Synology-only (no Immich).
+photos are included. Optionally, each account's full timeline is also
+downloaded into <destination>/<user>/timeline/. Synology-only (no Immich).
 """
 
 from __future__ import annotations
@@ -42,7 +43,8 @@ def _plain(s):
     return re.sub(r"[ \t]{2,}", " ", s).strip()
 
 
-def run_backup(sessions, selected, all_mode, owner_only, dest, stats, control):
+def run_backup(sessions, selected, all_mode, owner_only, dest, stats, control,
+               include_timeline=False):
     dest = Path(dest)
     seen, jobs = set(), []
     for s in sessions:
@@ -59,8 +61,10 @@ def run_backup(sessions, selected, all_mode, owner_only, dest, stats, control):
             if all_mode or k in selected:
                 jobs.append((s, a))
 
-    stats.albums_total = len(jobs)
-    if not jobs:
+    # Albums count as work units; the full timeline (if enabled) adds one
+    # extra unit per account, downloaded last into a "timeline" folder.
+    stats.albums_total = len(jobs) + (len(sessions) if include_timeline else 0)
+    if not jobs and not include_timeline:
         stats.log_message(
             "No album found for these accounts. Check the Synology address "
             "and that the account has access to Synology Photos albums.")
@@ -99,6 +103,37 @@ def run_backup(sessions, selected, all_mode, owner_only, dest, stats, control):
                 stats.log_message(f"failed: {it.get('filename')}")
             stats.items_done += 1
         stats.albums_done += 1
+
+    # Full timeline: every photo of each account (including those in no
+    # album), saved under <destination>/<user>/timeline/. Done last.
+    if include_timeline:
+        for s in sessions:
+            if not control.check():
+                break
+            stats.current_album = f"Timeline - {s.name}"
+            stats.log_message(f"Timeline: {s.name}")
+            try:
+                items = s.syno.list_items()
+            except Exception as e:  # noqa: BLE001
+                stats.log_message(f"list timeline {s.name}: {e}")
+                continue
+            folder = dest / safe_name(s.name) / "timeline"
+            stats.items_total = len(items)
+            stats.items_done = 0
+            for it in items:
+                if not control.check():
+                    break
+                try:
+                    fp = s.syno.download(it, folder)
+                except Exception:  # noqa: BLE001
+                    fp = None
+                if fp:
+                    stats.uploaded += 1
+                else:
+                    stats.failed += 1
+                    stats.log_message(f"failed: {it.get('filename')}")
+                stats.items_done += 1
+            stats.albums_done += 1
     stats.current_step = "done"
 
 
@@ -117,9 +152,10 @@ class BackupView(ctk.CTkFrame):
 
         ctk.CTkLabel(self, text="Synology to local", font=W.font(20, "bold"),
                      text_color=W.TEXT).pack(anchor="w", padx=20, pady=(12, 0))
-        ctk.CTkLabel(self, text="Download your Synology Photos albums to a "
-                     "folder on this computer. Files are kept; no Immich "
-                     "needed.", font=W.font(12), text_color=W.MUTED,
+        ctk.CTkLabel(self, text="Download your Synology Photos albums - and "
+                     "optionally each account's full timeline - to a folder "
+                     "on this computer. Files are kept; no Immich needed.",
+                     font=W.font(12), text_color=W.MUTED,
                      wraplength=900, justify="left", anchor="w").pack(
             anchor="w", padx=20, pady=(0, 6))
 
@@ -194,6 +230,16 @@ class BackupView(ctk.CTkFrame):
                                        justify="left")
         self.lbl_shared.pack(anchor="w")
         self._shared_desc("All photos")
+
+        self.var_timeline = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(
+            c.body,
+            text="Also back up each account's full timeline "
+                 "(into a \"timeline\" folder)",
+            variable=self.var_timeline, fg_color=W.GREEN,
+            hover_color=W.GREEN_DK, checkbox_width=20, checkbox_height=20,
+            corner_radius=0, border_width=2, font=W.font(12)).pack(
+            anchor="w", pady=(12, 0))
 
         self.albums_card = W.card(self, "Albums (tick the ones to back up)")
         top = ctk.CTkFrame(self.albums_card.body, fg_color="transparent")
@@ -351,8 +397,9 @@ class BackupView(ctk.CTkFrame):
         all_mode = self.toggle_mode.get() == "All albums"
         owner_only = {n: o for n, o, _d in _BK_SHARED}.get(
             self.toggle_shared.get(), False)
+        include_timeline = bool(self.var_timeline.get())
         selected = {k for k, v in self.album_vars.items() if v.get()}
-        if not all_mode and not selected:
+        if not all_mode and not selected and not include_timeline:
             self._set_log("No album selected.")
             return
         self.stats = MigrationStats()
@@ -366,7 +413,8 @@ class BackupView(ctk.CTkFrame):
         threading.Thread(
             target=run_backup,
             args=(self.app.syno_sessions, selected, all_mode, owner_only,
-                  self.dest, self.stats, self.control), daemon=True).start()
+                  self.dest, self.stats, self.control, include_timeline),
+            daemon=True).start()
         self._poll()
 
     def _poll(self):

@@ -19,6 +19,7 @@ class SettingsView(ctk.CTkFrame):
         self.cfg.setdefault("users", [])
         self.cfg.setdefault("backup_accounts", [])
         self._use_immich = True
+        self._mode = "migrate"   # migrate | manage | backup (per active tab)
         # Which account list the panel manages: "users" (Immich migration,
         # with API keys) or "backup_accounts" (local backup, Synology only).
         self._accounts_key = "users"
@@ -103,15 +104,15 @@ class SettingsView(ctk.CTkFrame):
     # Per-tab text for the Users section so the panel reads coherently.
     _CONTEXT = {
         "Synology to Immich": (
-            True, "+  Add user",
+            "migrate", "+  Add user",
             "Users whose photos will be migrated to Immich. Each one needs "
-            "its Synology login and its Immich API key."),
+            "its Synology login and that same user's Immich API key."),
         "Immich Album Manager": (
-            True, "+  Add user",
+            "manage", "+  Add Immich user",
             "The Immich users whose albums you want to manage. Each one uses "
-            "its Immich API key (no Synology login needed to rename albums)."),
+            "only its Immich API key - no Synology login."),
         "Synology to local": (
-            False, "+  Add Synology account",
+            "backup", "+  Add Synology account",
             "Synology accounts whose albums you want to back up to this "
             "computer. Synology login only - no Immich API key."),
     }
@@ -122,8 +123,10 @@ class SettingsView(ctk.CTkFrame):
         'Synology to local' uses the separate `backup_accounts` list (Synology
         only). The Immich address is hidden when the tab doesn't use Immich,
         and the Users hint is tailored to the tab so it reads coherently."""
-        use_immich, add_text, hint = self._CONTEXT.get(
+        mode, add_text, hint = self._CONTEXT.get(
             tab, self._CONTEXT["Synology to Immich"])
+        self._mode = mode
+        use_immich = mode in ("migrate", "manage")
         self._use_immich = use_immich
         self._accounts_key = "users" if use_immich else "backup_accounts"
         self.cfg.setdefault(self._accounts_key, [])
@@ -171,14 +174,14 @@ class SettingsView(ctk.CTkFrame):
                              color=W.BLUE, hover=W.BLUE_DK, width=56,
                              height=28).pack(side="right", pady=6)
             ctk.CTkLabel(
-                row, text=f"  {u.get('syno_username', '?')}",
+                row, text=f"  {u.get('syno_username') or u.get('name') or '?'}",
                 anchor="w", text_color=W.TEXT, font=W.font(13, "bold")).pack(
                 side="left", fill="x", expand=True, padx=6)
 
     def _dialog_urls(self):
         self._pull()
         return dict(
-            with_immich=self._use_immich,
+            mode=self._mode,
             syno_url=self.cfg["synology"].get("url", ""),
             verify=self.cfg["synology"].get("verify_ssl", False),
             immich_url=self.cfg["immich"].get("url", ""),
@@ -188,6 +191,7 @@ class SettingsView(ctk.CTkFrame):
         u = prompt_user(self, None, **self._dialog_urls())
         if u:
             self.cfg.setdefault(self._accounts_key, []).append(u)
+            save_config(self.cfg)
             self.app.invalidate_sessions()
             self._refresh_users()
 
@@ -196,11 +200,13 @@ class SettingsView(ctk.CTkFrame):
                         **self._dialog_urls())
         if u:
             self.cfg[self._accounts_key][i] = u
+            save_config(self.cfg)
             self.app.invalidate_sessions()
             self._refresh_users()
 
     def _remove_user(self, i):
         del self.cfg[self._accounts_key][i]
+        save_config(self.cfg)
         self.app.invalidate_sessions()
         self._refresh_users()
 

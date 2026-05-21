@@ -103,9 +103,8 @@ class MigrationView(ctk.CTkFrame):
         ctk.CTkLabel(c.body, text="Albums to migrate", text_color=W.TEXT,
                      font=W.font(13, "bold")).pack(anchor="w")
         self.toggle_mode = W.SquareToggle(
-            c.body, ["All albums", "Specific albums"],
-            "Specific albums" if mig.get("albums_mode") == "select"
-            else "All albums", command=self._on_mode)
+            c.body, ["All albums", "Specific albums"], "All albums",
+            command=self._on_mode)
         self.toggle_mode.pack(anchor="w", pady=(2, 2))
 
         ctk.CTkLabel(c.body, text="Shared albums", text_color=W.TEXT,

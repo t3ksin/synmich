@@ -34,7 +34,7 @@ Instead, synmich migrates **each Synology user into their own Immich account**, 
 | Correct **owner** preserved per photo | ❌ | ❌ | ✅ |
 | Synology permissions → Immich roles | ❌ | ❌ | ✅ |
 | Synology **Shared Space** | ❌ | ❌ | ✅ |
-| **2FA** on the Synology source | ❌ | ✅ | ✅ |
+| **2FA** with remembered device (enter the code once) | ❌ | ❌ | ✅ |
 | Graphical interface | ❌ | ✅ web | ✅ desktop |
 | License | AGPL-3.0 | GPL-3.0 | MIT |
 

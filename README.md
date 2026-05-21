@@ -80,11 +80,10 @@ cd synmich
 python3 -m venv .venv && source .venv/bin/activate   # Windows: py -m venv .venv && .venv\Scripts\activate
 python -m pip install --upgrade pip
 pip install -e ".[gui]"
+synmich gui                                          # 👉 launch the app
 ```
 
-**👉 Recommended — the graphical app:** `synmich gui`
-
-**Or the terminal wizard** (interactive setup, then migrate): `synmich init`
+**Prefer the terminal?** Run `synmich init` instead — an interactive setup wizard that then starts the migration.
 
 > Re-activate the venv (`source .venv/bin/activate`) in each new terminal. If
 > `synmich` isn't found, run **`python -m synmich gui`**.

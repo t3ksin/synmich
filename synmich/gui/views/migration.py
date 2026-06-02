@@ -129,6 +129,19 @@ class MigrationView(ctk.CTkFrame):
             hover_color=W.GREEN_DK, checkbox_width=20, checkbox_height=20,
             corner_radius=0, border_width=2, font=W.font(12)).pack(
             anchor="w", pady=(12, 0))
+        # External-library mode: link existing assets instead of re-uploading
+        # duplicates when the photos already live in Immich via an external
+        # library (see immich-app/immich#7804).
+        self.var_external = ctk.BooleanVar(
+            value=bool(mig.get("external_library_mode", False)))
+        ctk.CTkCheckBox(
+            c.body,
+            text="Photos already in Immich via an external library "
+                 "(link instead of re-uploading)",
+            variable=self.var_external, fg_color=W.GREEN,
+            hover_color=W.GREEN_DK, checkbox_width=20, checkbox_height=20,
+            corner_radius=0, border_width=2, font=W.font(12)).pack(
+            anchor="w", pady=(6, 0))
 
         self.albums_card = W.card(self, "Albums (tick the ones to migrate)")
         top = ctk.CTkFrame(self.albums_card.body, fg_color="transparent")
@@ -253,6 +266,7 @@ class MigrationView(ctk.CTkFrame):
         mig["shared_albums_mode"] = W.SHARED_TO_INTERNAL.get(
             self.toggle_shared.get(), "link")
         mig["include_timeline"] = bool(self.var_timeline.get())
+        mig["external_library_mode"] = bool(self.var_external.get())
         if mig["albums_mode"] == "select":
             mig["selected_albums"] = [
                 k for k, v in self.album_vars.items() if v.get()]

@@ -155,9 +155,18 @@ migration:
   include_albums: true
   include_timeline: true
   shared_albums_mode: link         # link | duplicate | ignore
+  external_library_mode: false     # see "External library mode" below
 ```
 
 > Config and checkpoint files stay on your machine and are git-ignored — no credentials ever leave your computer.
+
+### External library mode
+
+If your photos are **already in Immich through an [external library](https://immich.app/docs/features/libraries/)** (Immich reads them in place from a mounted Synology share rather than storing its own copy), set `external_library_mode: true`.
+
+Without it, synmich uploads each photo, which lands a **second copy** in Immich's upload library: Immich's built-in deduplication compares content checksums, but it gives external-library assets a *dummy* checksum (`sha1('path:' + originalPath)`, [immich-app/immich#7804](https://github.com/immich-app/immich/discussions/7804)) instead of hashing the file — so the duplicate is invisible to that check and slips through.
+
+With the mode on, synmich builds an index of the assets already in Immich and, for each Synology photo, **matches it to the existing asset by filename + capture date** (`exifInfo.dateTimeOriginal`), then just adds that asset to the album — no download, no re-upload. Only the album/metadata is migrated; your media stays external. Any photo it can't confidently match is uploaded normally, so nothing is ever dropped.
 
 ---
 

@@ -133,6 +133,10 @@ def cmd_stats(args) -> int:
         items = [
             ("Uploaded", f"{summary['uploaded']:,}"),
             ("Duplicates", f"{summary['duplicate']:,}"),
+        ]
+        if summary.get("linked"):
+            items.append(("Linked (external)", f"{summary['linked']:,}"))
+        items += [
             ("Failed", f"{summary['failed']:,}"),
             ("Albums done", f"{summary['albums_done']:,}"),
         ]

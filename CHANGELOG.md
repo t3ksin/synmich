@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.2.0] - 2026-06-02
+
+### Added
+
+- **External library mode** (`migration.external_library_mode`). For setups
+  where the photos already live in Immich via an *external library*, synmich
+  now matches each Synology photo to the existing Immich asset by filename +
+  capture date and adds it straight to the album — no download, no re-upload —
+  instead of creating a duplicate copy in the upload library. Unmatched photos
+  still upload normally so nothing is dropped, and matched photos are counted
+  under a new **Linked (external)** stat in the summaries and checkpoint.
+  Resolves the duplication reported with external libraries (#1, #2): Immich
+  can't dedup external assets because it stores a dummy path-based checksum for
+  them ([immich-app/immich#7804](https://github.com/immich-app/immich/discussions/7804)),
+  so a content-checksum skip could never catch them.
+
 ## [2.1.0] - 2026-05-21
 
 ### Added

@@ -347,3 +347,67 @@ class ImmichClient:
             return r.json()
 
         return self._retry(_do)
+
+    def iter_assets(self, page_size: int = 1000):
+        """Yield every asset visible to this API key, across ALL libraries
+        (the user's upload library AND any external libraries).
+
+        Paginates POST /search/metadata. `withExif` is requested so each
+        item carries `exifInfo.dateTimeOriginal`, which external-library
+        mode needs to disambiguate same-named photos.
+
+        Why this exists: Immich stores a *dummy* checksum for
+        external-library assets — `sha1('path:' + originalPath)`, not a hash
+        of the file's bytes (confirmed in immich-app/immich#7804). So a
+        content-checksum dedup can never match a file that lives in an
+        external library; matching has to be done on metadata instead.
+        """
+        page = 1
+        while True:
+            def _do(p=page):
+                r = requests.post(
+                    f"{self.base_url}/search/metadata",
+                    headers=self._headers(
+                        {"Content-Type": "application/json"}
+                    ),
+                    json={
+                        "page": p,
+                        "size": page_size,
+                        "withExif": True,
+                    },
+                    timeout=self.timeout,
+                )
+                r.raise_for_status()
+                return r.json()
+
+            data = self._retry(_do)
+            assets = data.get("assets", {}) or {}
+            for it in assets.get("items", []) or []:
+                yield it
+            nxt = assets.get("nextPage")
+            if not nxt:
+                break
+            try:
+                page = int(nxt)
+            except (TypeError, ValueError):
+                break
+
+    def build_filename_index(
+        self, page_size: int = 1000
+    ) -> Dict[str, List[Tuple[str, Optional[str]]]]:
+        """Index existing Immich assets by filename for external-library mode.
+
+        Returns {originalFileName.lower(): [(asset_id, dateTimeOriginal), ...]}
+        covering every asset this key can see (external libraries included).
+        Multiple entries per name are kept so the caller can disambiguate by
+        capture date when a filename isn't unique.
+        """
+        index: Dict[str, List[Tuple[str, Optional[str]]]] = {}
+        for a in self.iter_assets(page_size=page_size):
+            name = a.get("originalFileName")
+            aid = a.get("id")
+            if not name or not aid:
+                continue
+            dto = (a.get("exifInfo") or {}).get("dateTimeOriginal")
+            index.setdefault(name.lower(), []).append((aid, dto))
+        return index

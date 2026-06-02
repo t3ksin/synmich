@@ -255,6 +255,27 @@ def run_wizard() -> int:
         _mode_map = {"mirror-syno": "link", "separate": "duplicate", "skip": "ignore"}
         config["migration"]["shared_albums_mode"] = _mode_map[mode]
 
+    # External-library mode: only relevant if the photos are already in Immich
+    # via an external library. Default off so normal upload users aren't asked
+    # to reason about it.
+    if config["migration"]["include_albums"]:
+        console.print()
+        muted(
+            "  Are your photos ALREADY in Immich through an external library?"
+        )
+        muted(
+            "  (Immich reads them in place from a mounted Synology share, "
+            "rather than storing its own copy.)"
+        )
+        muted(
+            "  If yes, synmich links the existing photos to the albums instead "
+            "of re-uploading duplicates."
+        )
+        config["migration"]["external_library_mode"] = _confirm(
+            "Use external-library mode?",
+            default=False,
+        )
+
     config["migration"]["include_shared_space"] = _confirm(
         "Migrate Shared Space photos? (recommended if you use it)",
     )

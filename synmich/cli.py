@@ -339,7 +339,12 @@ def cmd_migrate(args) -> int:
             body = (
                 f"[bold]Albums migrated :[/] {s.albums_done}\n"
                 f"[bold]Photos uploaded :[/] [green]{s.uploaded}[/]\n"
-                f"[bold]Duplicates      :[/] {s.duplicate}\n"
+                + (
+                    f"[bold]Linked existing :[/] [cyan]{s.linked}[/]\n"
+                    if s.linked
+                    else ""
+                )
+                + f"[bold]Duplicates      :[/] {s.duplicate}\n"
                 f"[bold]Failed          :[/] "
                 + (f"[red]{s.failed}[/]" if s.failed else "0")
             )

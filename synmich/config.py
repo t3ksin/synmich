@@ -61,6 +61,14 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         #               with only their own photos
         #   ignore    - skip shared albums entirely
         "shared_albums_mode": "link",
+        # External-library mode: set True when your photos are already in
+        # Immich through an *external library* (Immich reads them in place,
+        # e.g. a mounted Synology share). synmich then matches each Synology
+        # photo to the existing asset by filename + capture date and adds it
+        # to the album WITHOUT re-uploading — avoiding the duplicate copy that
+        # Immich's checksum dedup can't catch for external assets (see
+        # immich-app/immich#7804). Photos with no match are uploaded normally.
+        "external_library_mode": False,
         "include_shared_space": True,
         # Name of the user who becomes owner of Shared Space photos
         "shared_space_owner": "",

@@ -411,3 +411,66 @@ class ImmichClient:
             dto = (a.get("exifInfo") or {}).get("dateTimeOriginal")
             index.setdefault(name.lower(), []).append((aid, dto))
         return index
+
+    def find_assets_by_filename(
+        self, filename: str, page_size: int = 250
+    ) -> List[Tuple[str, Optional[str]]]:
+        """Exact-name lookup for a single filename (external-library fallback).
+
+        build_filename_index() paginates the *whole* library with
+        POST /search/metadata, which orders by a non-unique key
+        (`fileCreatedAt`) and uses offset pagination — so on large libraries
+        with many identical timestamps (duplicates, burst shots) it silently
+        skips assets at page boundaries, and a file that really is in Immich
+        can be missing from the bulk index. This re-checks one filename
+        directly: the `originalFileName` filter narrows the DB scan to a
+        handful of rows, so the same pagination weakness no longer bites.
+
+        Immich treats `originalFileName` as a substring `ILIKE`, so we
+        re-filter the results down to an exact (case-insensitive) name match.
+        Returns [(asset_id, dateTimeOriginal), ...].
+        """
+        if not filename:
+            return []
+        target = filename.lower()
+        results: List[Tuple[str, Optional[str]]] = []
+        page = 1
+        while True:
+            def _do(p=page):
+                r = requests.post(
+                    f"{self.base_url}/search/metadata",
+                    headers=self._headers(
+                        {"Content-Type": "application/json"}
+                    ),
+                    json={
+                        "page": p,
+                        "size": page_size,
+                        "originalFileName": filename,
+                        "withExif": True,
+                    },
+                    timeout=self.timeout,
+                )
+                r.raise_for_status()
+                return r.json()
+
+            data = self._retry(_do)
+            assets = data.get("assets", {}) or {}
+            for it in assets.get("items", []) or []:
+                name = it.get("originalFileName")
+                aid = it.get("id")
+                if not name or not aid:
+                    continue
+                if name.lower() != target:
+                    continue
+                dto = (it.get("exifInfo") or {}).get(
+                    "dateTimeOriginal"
+                )
+                results.append((aid, dto))
+            nxt = assets.get("nextPage")
+            if not nxt:
+                break
+            try:
+                page = int(nxt)
+            except (TypeError, ValueError):
+                break
+        return results

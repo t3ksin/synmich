@@ -310,6 +310,14 @@ class Migrator:
             str, Dict[str, List[Tuple[str, Optional[str]]]]
         ] = {}
         self._asset_index_lock = threading.Lock()
+        # Per-(uploader, filename) cache for the targeted fallback lookup we
+        # run when the bulk index misses a name (the bulk scan can drop assets
+        # at page boundaries). Caches negatives too, so a genuinely-absent
+        # file is queried at most once.
+        self._fallback_cache: Dict[
+            Tuple[str, str], List[Tuple[str, Optional[str]]]
+        ] = {}
+        self._fallback_lock = threading.Lock()
 
         # Filters
         filters = config.get("filters", {})
@@ -403,6 +411,34 @@ class Migrator:
             )
             return idx
 
+    def _lookup_by_filename(
+        self, uploader: UserSession, filename: str
+    ) -> List[Tuple[str, Optional[str]]]:
+        """Targeted exact-name lookup, used when the bulk index misses.
+
+        Result (including the empty list) is cached per (uploader, filename)
+        so a name is queried against Immich at most once per run.
+        """
+        if not filename:
+            return []
+        key = (uploader.name, filename.lower())
+        with self._fallback_lock:
+            cached = self._fallback_cache.get(key)
+        if cached is not None:
+            return cached
+        try:
+            candidates = uploader.immich.find_assets_by_filename(
+                filename
+            )
+        except Exception as e:
+            self._log(
+                f"⚠ Fallback lookup failed for {filename}: {e}"
+            )
+            candidates = []
+        with self._fallback_lock:
+            self._fallback_cache[key] = candidates
+        return candidates
+
     def _process_one_asset(
         self,
         item: Dict[str, Any],
@@ -452,11 +488,25 @@ class Migrator:
         # instead of downloading and re-uploading a duplicate copy.
         if self.external_library_mode:
             index = self._get_asset_index(uploader)
+            filename = item.get("filename", "")
+            capture = item.get("time")
             existing_id = match_existing_asset(
-                index,
-                item.get("filename", ""),
-                item.get("time"),
+                index, filename, capture
             )
+            if existing_id is None:
+                # Bulk index miss isn't proof the asset is absent — the
+                # full-library scan can drop rows at page boundaries. Confirm
+                # with a targeted exact-name query before deciding to upload a
+                # duplicate.
+                candidates = self._lookup_by_filename(
+                    uploader, filename
+                )
+                if candidates:
+                    existing_id = match_existing_asset(
+                        {filename.lower(): candidates},
+                        filename,
+                        capture,
+                    )
             if existing_id:
                 self.checkpoint.mark_linked(
                     uploader.name, syno_id, existing_id
@@ -466,7 +516,7 @@ class Migrator:
             # No match → fall through to a normal upload so the photo is
             # never silently missing from the migrated album.
             self._log(
-                f"↑ No external match for {item.get('filename')} — "
+                f"↑ No external match for {filename} — "
                 f"uploading"
             )
 

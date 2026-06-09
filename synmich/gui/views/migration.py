@@ -341,14 +341,20 @@ class MigrationView(ctk.CTkFrame):
             self.pause_btn.configure(state="disabled")
             self.stop_btn.configure(state="disabled")
             self.start_btn.configure(state="normal")
-            self.app.last_run = {"label": "Synology to Immich", "rows": [
-                ("Uploaded", str(s.uploaded), W.GREEN),
+            rows = [("Uploaded", str(s.uploaded), W.GREEN)]
+            if s.linked:
+                rows.append(
+                    ("Linked (external)", str(s.linked), W.GREEN))
+            rows += [
                 ("Duplicate", str(s.duplicate), W.BLUE),
                 ("Failed", str(s.failed), W.RED),
                 ("Albums", str(s.albums_done), W.TEXT),
-                ("Total time", W.fmt_duration(el), W.MUTED)]}
+                ("Total time", W.fmt_duration(el), W.MUTED)]
+            self.app.last_run = {"label": "Synology to Immich", "rows": rows}
+            linked_txt = f"{s.linked} linked, " if s.linked else ""
             self._set_log(
                 f"\nMigration complete - {s.uploaded} uploaded, "
+                f"{linked_txt}"
                 f"{s.duplicate} duplicate, {s.failed} failed, "
                 f"{s.albums_done} album(s) in {W.fmt_duration(el)}.")
         else:

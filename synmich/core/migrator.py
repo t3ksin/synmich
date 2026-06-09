@@ -58,39 +58,57 @@ def _iso_to_epoch(value: Optional[str]) -> Optional[float]:
 
 
 def match_existing_asset(
-    index: Dict[str, List[Tuple[str, Optional[str]]]],
+    index: Dict[str, List[Tuple]],
     filename: str,
     capture_epoch: Optional[float],
 ) -> Optional[str]:
     """Find an Immich asset already holding this Synology photo.
 
     `index` is ImmichClient.build_filename_index() output:
-    {filename.lower(): [(asset_id, dateTimeOriginal), ...]}.
+    {filename.lower(): [(asset_id, dateTimeOriginal, libraryId), ...]}.
+    Plain (asset_id, dateTimeOriginal) 2-tuples are also accepted.
 
     A single same-named asset is taken as the match (filename is the strong
     key — e.g. nino's `2025-09-18_12-54-48_IMG_6054.HEIC` prefix is unique).
     When several assets share the filename, we disambiguate by capture date
     and require a hit within _DATE_MATCH_TOLERANCE_S; if none qualifies we
     return None so the caller uploads rather than risk linking the wrong shot.
+
+    When more than one asset qualifies — e.g. the photo exists both as an
+    external-library asset and as a leftover copy in the upload library from
+    an earlier run — the external one (`libraryId` set) is preferred, so we
+    link to the media kept external rather than to a re-uploaded duplicate.
     """
     candidates = index.get(filename.lower())
     if not candidates:
         return None
-    if len(candidates) == 1:
-        return candidates[0][0]
+
+    # Normalise to (asset_id, dateTimeOriginal, library_id). library_id is
+    # None for upload-library assets and set for external-library ones.
+    norm = [
+        (c[0], c[1] if len(c) > 1 else None, c[2] if len(c) > 2 else None)
+        for c in candidates
+    ]
+
+    if len(norm) == 1:
+        return norm[0][0]
     if capture_epoch is None:
         return None
-    best_id, best_diff = None, None
-    for aid, dto in candidates:
+
+    # Keep every same-named asset whose capture date is within tolerance,
+    # then prefer external assets, breaking ties on the closest date.
+    qualifying = []  # (is_upload_copy, date_diff, asset_id)
+    for aid, dto, lib in norm:
         ep = _iso_to_epoch(dto)
         if ep is None:
             continue
         diff = abs(ep - capture_epoch)
-        if best_diff is None or diff < best_diff:
-            best_id, best_diff = aid, diff
-    if best_id is not None and best_diff <= _DATE_MATCH_TOLERANCE_S:
-        return best_id
-    return None
+        if diff <= _DATE_MATCH_TOLERANCE_S:
+            qualifying.append((lib is None, diff, aid))
+    if not qualifying:
+        return None
+    qualifying.sort(key=lambda q: (q[0], q[1]))
+    return qualifying[0][2]
 
 
 @dataclass
@@ -307,7 +325,7 @@ class Migrator:
         # each Immich user sees a different set of assets, so indexes aren't
         # shared. Guarded because uploads run on a thread pool.
         self._asset_index: Dict[
-            str, Dict[str, List[Tuple[str, Optional[str]]]]
+            str, Dict[str, List[Tuple[str, Optional[str], Optional[str]]]]
         ] = {}
         self._asset_index_lock = threading.Lock()
         # Per-(uploader, filename) cache for the targeted fallback lookup we
@@ -315,7 +333,7 @@ class Migrator:
         # at page boundaries). Caches negatives too, so a genuinely-absent
         # file is queried at most once.
         self._fallback_cache: Dict[
-            Tuple[str, str], List[Tuple[str, Optional[str]]]
+            Tuple[str, str], List[Tuple[str, Optional[str], Optional[str]]]
         ] = {}
         self._fallback_lock = threading.Lock()
 
@@ -380,7 +398,7 @@ class Migrator:
 
     def _get_asset_index(
         self, uploader: UserSession
-    ) -> Dict[str, List[Tuple[str, Optional[str]]]]:
+    ) -> Dict[str, List[Tuple[str, Optional[str], Optional[str]]]]:
         """Return (building once) the filename index for an uploader.
 
         Built lazily and cached per uploader. The build is done under a lock
@@ -413,7 +431,7 @@ class Migrator:
 
     def _lookup_by_filename(
         self, uploader: UserSession, filename: str
-    ) -> List[Tuple[str, Optional[str]]]:
+    ) -> List[Tuple[str, Optional[str], Optional[str]]]:
         """Targeted exact-name lookup, used when the bulk index misses.
 
         Result (including the empty list) is cached per (uploader, filename)
@@ -512,6 +530,7 @@ class Migrator:
                     uploader.name, syno_id, existing_id
                 )
                 self.stats.linked += 1
+                self._log(f"🔗 Linked (external): {filename}")
                 return existing_id, uploader.name
             # No match → fall through to a normal upload so the photo is
             # never silently missing from the migrated album.

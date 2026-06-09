@@ -1,5 +1,25 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **External library mode: photos already in Immich were still re-uploaded.**
+  On large libraries the bulk asset index built from `POST /search/metadata`
+  could silently drop assets at page boundaries (offset pagination over a
+  non-unique sort key), so a photo that really lived in an external library got
+  no match and was re-uploaded as a duplicate. When the bulk index misses a
+  name, synmich now does a targeted exact-name lookup before deciding to upload
+  (#1).
+- **Link to the external asset, not a leftover upload copy.** When a filename
+  resolves to both an external-library asset and an upload-library copy (e.g.
+  left over from an earlier run), matching now prefers the external one via
+  `libraryId` instead of picking arbitrarily by capture date (#1).
+- **`Linked (external)` was missing from the GUI/CLI run summaries.** The count
+  is now shown in both, and each linked photo is logged as it happens, so
+  external-library runs report what was linked instead of only what was
+  uploaded.
+
 ## [2.2.0] - 2026-06-02
 
 ### Added

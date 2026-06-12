@@ -10,7 +10,7 @@ from concurrent.futures import (
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from synmich.core.synology import SynologyClient
 from synmich.core.immich import ImmichClient
@@ -92,6 +92,15 @@ def match_existing_asset(
 
     if len(norm) == 1:
         return norm[0][0]
+
+    # If exactly one external-library asset has this exact filename, prefer it
+    # even when video metadata timestamps disagree. Some cameras/containers
+    # expose video capture times in a different zone than Synology's album item
+    # time; the exact filename is still stronger than leftover upload copies.
+    external = [c for c in norm if c[2] is not None]
+    if len(external) == 1:
+        return external[0][0]
+
     if capture_epoch is None:
         return None
 
@@ -449,6 +458,9 @@ class Migrator:
                 filename
             )
         except Exception as e:
+            log.exception(
+                "Fallback lookup failed for %r", filename
+            )
             self._log(
                 f"⚠ Fallback lookup failed for {filename}: {e}"
             )

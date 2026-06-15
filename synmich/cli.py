@@ -1,7 +1,6 @@
 """synmich CLI — main entry point."""
 
 import argparse
-import logging
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -44,26 +43,7 @@ from synmich.ui.wizard import run_wizard
 from synmich.commands.doctor import cmd_doctor
 from synmich.commands.stats import cmd_stats
 from synmich.commands.checkpoints import add_subcommands as add_checkpoints_subcommands
-
-
-def setup_logging(verbose: bool = False) -> None:
-    log_file = get_log_file()
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-
-    fh = logging.FileHandler(log_file, encoding="utf-8")
-    fh.setLevel(logging.DEBUG)
-    fh.setFormatter(
-        logging.Formatter(
-            "%(asctime)s [%(levelname)s] %(message)s"
-        )
-    )
-
-    logger = logging.getLogger("synmich")
-    logger.setLevel(
-        logging.DEBUG if verbose else logging.INFO
-    )
-    logger.handlers.clear()
-    logger.addHandler(fh)
+from synmich.logging_setup import setup_logging
 
 
 def _default_migrate_args() -> argparse.Namespace:

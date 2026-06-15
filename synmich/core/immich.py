@@ -394,17 +394,21 @@ class ImmichClient:
 
     def build_filename_index(
         self, page_size: int = 1000
-    ) -> Dict[str, List[Tuple[str, Optional[str], Optional[str]]]]:
+    ) -> Dict[str, List[Tuple[str, Optional[str], Optional[str], Optional[str]]]]:
         """Index existing Immich assets by filename for external-library mode.
 
         Returns
-        {originalFileName.lower(): [(asset_id, dateTimeOriginal, libraryId), …]}
+        {originalFileName.lower(): [(asset_id, dateTimeOriginal, libraryId, originalPath), …]}
         covering every asset this key can see (external libraries included).
         Multiple entries per name are kept so the caller can disambiguate by
         capture date when a filename isn't unique, and `libraryId` lets it
-        prefer the external asset over a leftover upload-library copy.
+        prefer the external asset over a leftover upload-library copy. The
+        path lets the matcher break ties when the same external asset exists
+        in more than one Immich external library.
         """
-        index: Dict[str, List[Tuple[str, Optional[str], Optional[str]]]] = {}
+        index: Dict[
+            str, List[Tuple[str, Optional[str], Optional[str], Optional[str]]]
+        ] = {}
         for a in self.iter_assets(page_size=page_size):
             name = a.get("originalFileName")
             aid = a.get("id")
@@ -412,13 +416,13 @@ class ImmichClient:
                 continue
             dto = (a.get("exifInfo") or {}).get("dateTimeOriginal")
             index.setdefault(name.lower(), []).append(
-                (aid, dto, a.get("libraryId"))
+                (aid, dto, a.get("libraryId"), a.get("originalPath"))
             )
         return index
 
     def find_assets_by_filename(
         self, filename: str, page_size: int = 250
-    ) -> List[Tuple[str, Optional[str], Optional[str]]]:
+    ) -> List[Tuple[str, Optional[str], Optional[str], Optional[str]]]:
         """Exact-name lookup for a single filename (external-library fallback).
 
         build_filename_index() paginates the *whole* library with
@@ -432,12 +436,14 @@ class ImmichClient:
 
         Immich treats `originalFileName` as a substring `ILIKE`, so we
         re-filter the results down to an exact (case-insensitive) name match.
-        Returns [(asset_id, dateTimeOriginal, libraryId), ...].
+        Returns [(asset_id, dateTimeOriginal, libraryId, originalPath), ...].
         """
         if not filename:
             return []
         target = filename.lower()
-        results: List[Tuple[str, Optional[str], Optional[str]]] = []
+        results: List[
+            Tuple[str, Optional[str], Optional[str], Optional[str]]
+        ] = []
         page = 1
         while True:
             def _do(p=page):
@@ -469,7 +475,9 @@ class ImmichClient:
                 dto = (it.get("exifInfo") or {}).get(
                     "dateTimeOriginal"
                 )
-                results.append((aid, dto, it.get("libraryId")))
+                results.append(
+                    (aid, dto, it.get("libraryId"), it.get("originalPath"))
+                )
             nxt = assets.get("nextPage")
             if not nxt:
                 break

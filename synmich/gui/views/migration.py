@@ -10,6 +10,7 @@ at migration time.
 
 from __future__ import annotations
 
+import logging
 import re
 import threading
 import time
@@ -22,6 +23,8 @@ from synmich.core.checkpoint import Checkpoint
 from synmich.core.migrator import Migrator, MigrationControl, MigrationStats
 from synmich.gui import widgets as W
 from synmich.ui.album_selector import _build_records
+
+log = logging.getLogger("synmich")
 
 
 def _plain(s):
@@ -224,8 +227,8 @@ class MigrationView(ctk.CTkFrame):
         try:
             records = _build_records(self.app.users_syno_sessions)
         except Exception as e:  # noqa: BLE001
-            self.after(0, lambda: (self._busy(False),
-                                   self._set_log(f"Load albums failed: {e}")))
+            msg = f"Load albums failed: {e}"
+            self.after(0, lambda: (self._busy(False), self._set_log(msg)))
             return
         self.after(0, lambda: self._populate(records))
 
@@ -307,6 +310,7 @@ class MigrationView(ctk.CTkFrame):
         try:
             migrator.run()
         except Exception as e:  # noqa: BLE001
+            log.exception("Migration crashed in GUI")
             self.stats.log_message(f"Migration crashed: {e}")
         finally:
             self.stats.current_step = "done"

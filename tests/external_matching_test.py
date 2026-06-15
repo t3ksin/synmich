@@ -46,3 +46,38 @@ def test_multiple_external_assets_still_require_capture_date_match():
         )
         == "external-new"
     )
+
+
+def test_prefers_owner_path_when_multiple_external_assets_have_same_date():
+    filename = "2025-03-04_15-02-23_IMG_2146.HEIC"
+    candidates = [
+        (
+            "shared-copy",
+            "2025-03-04T14:02:23.486+00:00",
+            "shared-library",
+            "/volume1/photo/2025-misc/2025-03-04_15-02-23_IMG_2146.HEIC",
+        ),
+        (
+            "nino-copy",
+            "2025-03-04T14:02:23.486+00:00",
+            "nino-library",
+            "/volume1/homes/Nino/Photos/PhotoSync/2025/03/"
+            "2025-03-04_15-02-23_IMG_2146.HEIC",
+        ),
+        (
+            "uploaded-copy",
+            "2025-03-04T14:02:23.486+00:00",
+            None,
+            "/data/upload/c0e83c7c/photo.HEIC",
+        ),
+    ]
+
+    assert (
+        match_existing_asset(
+            {filename.lower(): candidates},
+            filename,
+            _iso_to_epoch("2025-03-04T14:02:23.486+00:00"),
+            owner_name="Nino",
+        )
+        == "nino-copy"
+    )

@@ -2,25 +2,7 @@
 
 ## [Unreleased]
 
-### Fixed
-
-- **External library mode: photos already in Immich were still re-uploaded.**
-  On large libraries the bulk asset index built from `POST /search/metadata`
-  could silently drop assets at page boundaries (offset pagination over a
-  non-unique sort key), so a photo that really lived in an external library got
-  no match and was re-uploaded as a duplicate. When the bulk index misses a
-  name, synmich now does a targeted exact-name lookup before deciding to upload
-  (#1).
-- **Link to the external asset, not a leftover upload copy.** When a filename
-  resolves to both an external-library asset and an upload-library copy (e.g.
-  left over from an earlier run), matching now prefers the external one via
-  `libraryId` instead of picking arbitrarily by capture date (#1).
-- **`Linked (external)` was missing from the GUI/CLI run summaries.** The count
-  is now shown in both, and each linked photo is logged as it happens, so
-  external-library runs report what was linked instead of only what was
-  uploaded.
-
-## [2.2.0] - 2026-06-02
+## [2.2.0] - 2026-06-15
 
 ### Added
 
@@ -35,6 +17,32 @@
   can't dedup external assets because it stores a dummy path-based checksum for
   them ([immich-app/immich#7804](https://github.com/immich-app/immich/discussions/7804)),
   so a content-checksum skip could never catch them.
+
+### Fixed
+
+- **External library mode: photos already in Immich were still re-uploaded.**
+  On large libraries the bulk asset index built from `POST /search/metadata`
+  could silently drop assets at page boundaries (offset pagination over a
+  non-unique sort key), so a photo that really lived in an external library got
+  no match and was re-uploaded as a duplicate. When the bulk index misses a
+  name, synmich now does a targeted exact-name lookup before deciding to upload
+  (#1).
+- **Link to the external asset, not a leftover upload copy.** When a filename
+  resolves to both an external-library asset and an upload-library copy (e.g.
+  left over from an earlier run), matching now prefers the external one via
+  `libraryId` instead of picking arbitrarily by capture date (#1).
+- **External-library tie-breaks now handle duplicate external paths better.**
+  When the same filename and capture date exist in multiple external
+  libraries, synmich now uses the Immich `originalPath` to prefer the asset
+  under the current Synology user's home folder before falling back to the
+  previous date-based choice (#1).
+- **The GUI now writes `~/.config/synmich/migration.log`.** CLI runs already
+  configured that file, but GUI-only runs did not install the file logger, so
+  fallback tracebacks were missing when testing from the desktop app (#1).
+- **`Linked (external)` was missing from the GUI/CLI run summaries.** The count
+  is now shown in both, and each linked photo is logged as it happens, so
+  external-library runs report what was linked instead of only what was
+  uploaded.
 
 ## [2.1.0] - 2026-05-21
 

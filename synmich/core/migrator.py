@@ -61,12 +61,13 @@ def match_existing_asset(
     index: Dict[str, List[Tuple]],
     filename: str,
     capture_epoch: Optional[float],
+    owner_name: Optional[str] = None,
 ) -> Optional[str]:
     """Find an Immich asset already holding this Synology photo.
 
     `index` is ImmichClient.build_filename_index() output:
-    {filename.lower(): [(asset_id, dateTimeOriginal, libraryId), ...]}.
-    Plain (asset_id, dateTimeOriginal) 2-tuples are also accepted.
+    {filename.lower(): [(asset_id, dateTimeOriginal, libraryId, originalPath), ...]}.
+    Plain 2- and 3-tuples from older indexes/tests are also accepted.
 
     A single same-named asset is taken as the match (filename is the strong
     key — e.g. nino's `2025-09-18_12-54-48_IMG_6054.HEIC` prefix is unique).
@@ -78,15 +79,24 @@ def match_existing_asset(
     external-library asset and as a leftover copy in the upload library from
     an earlier run — the external one (`libraryId` set) is preferred, so we
     link to the media kept external rather than to a re-uploaded duplicate.
+
+    If multiple external-library assets still qualify (same filename and
+    capture date in more than one external library), prefer the one whose
+    originalPath contains the current Synology user's name as a path segment.
     """
     candidates = index.get(filename.lower())
     if not candidates:
         return None
 
-    # Normalise to (asset_id, dateTimeOriginal, library_id). library_id is
-    # None for upload-library assets and set for external-library ones.
+    # Normalise to (asset_id, dateTimeOriginal, library_id, original_path).
+    # library_id is None for upload-library assets and set for external ones.
     norm = [
-        (c[0], c[1] if len(c) > 1 else None, c[2] if len(c) > 2 else None)
+        (
+            c[0],
+            c[1] if len(c) > 1 else None,
+            c[2] if len(c) > 2 else None,
+            c[3] if len(c) > 3 else None,
+        )
         for c in candidates
     ]
 
@@ -104,20 +114,31 @@ def match_existing_asset(
     if capture_epoch is None:
         return None
 
-    # Keep every same-named asset whose capture date is within tolerance,
-    # then prefer external assets, breaking ties on the closest date.
-    qualifying = []  # (is_upload_copy, date_diff, asset_id)
-    for aid, dto, lib in norm:
+    owner = (owner_name or "").strip().lower()
+
+    def owner_path_match(path: Optional[str]) -> bool:
+        if not owner or not path:
+            return False
+        parts = [p.lower() for p in re.split(r"[\\/]+", str(path)) if p]
+        return owner in parts
+
+    # Keep every same-named asset whose capture date is within tolerance, then
+    # prefer external assets. If date proximity ties, prefer the external path
+    # that belongs to the current Synology user.
+    qualifying = []  # (is_upload_copy, date_diff, not_owner_path, asset_id)
+    for aid, dto, lib, path in norm:
         ep = _iso_to_epoch(dto)
         if ep is None:
             continue
         diff = abs(ep - capture_epoch)
         if diff <= _DATE_MATCH_TOLERANCE_S:
-            qualifying.append((lib is None, diff, aid))
+            qualifying.append(
+                (lib is None, diff, not owner_path_match(path), aid)
+            )
     if not qualifying:
         return None
-    qualifying.sort(key=lambda q: (q[0], q[1]))
-    return qualifying[0][2]
+    qualifying.sort(key=lambda q: (q[0], q[1], q[2]))
+    return qualifying[0][3]
 
 
 @dataclass
@@ -440,7 +461,7 @@ class Migrator:
 
     def _lookup_by_filename(
         self, uploader: UserSession, filename: str
-    ) -> List[Tuple[str, Optional[str], Optional[str]]]:
+    ) -> List[Tuple[str, Optional[str], Optional[str], Optional[str]]]:
         """Targeted exact-name lookup, used when the bulk index misses.
 
         Result (including the empty list) is cached per (uploader, filename)
@@ -521,7 +542,7 @@ class Migrator:
             filename = item.get("filename", "")
             capture = item.get("time")
             existing_id = match_existing_asset(
-                index, filename, capture
+                index, filename, capture, owner_name=uploader.name
             )
             if existing_id is None:
                 # Bulk index miss isn't proof the asset is absent — the
@@ -536,6 +557,7 @@ class Migrator:
                         {filename.lower(): candidates},
                         filename,
                         capture,
+                        owner_name=uploader.name,
                     )
             if existing_id:
                 self.checkpoint.mark_linked(

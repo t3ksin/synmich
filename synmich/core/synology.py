@@ -62,6 +62,8 @@ class SynologyClient:
         # Lock to serialize HTTP requests on the same Session
         # (requests.Session is NOT thread-safe).
         self._lock = threading.Lock()
+        # Max supported API versions, queried once per API via SYNO.API.Info.
+        self._api_versions: Dict[str, int] = {}
 
     def _retry(self, fn, *args, **kwargs):
         last = None
@@ -177,6 +179,63 @@ class SynologyClient:
 
         return self._retry(_do)
 
+    def _best_version(self, api: str, known_max: int) -> int:
+        """Highest API version this NAS supports for `api`, capped at
+        `known_max` (the highest the code is written for).
+
+        Requesting a version above the NAS's maxVersion returns
+        `success:false` (error 104). synmich previously used version "7"
+        for SYNO.Foto.Browse.Item, which caps at 6 on most DSM 7.x boxes —
+        list/count silently came back empty and albums were created with
+        zero photos migrated.
+        """
+        with self._lock:
+            cached = self._api_versions.get(api)
+        if cached is not None:
+            return min(cached, known_max)
+        try:
+            r = self._api_get(
+                "SYNO.API.Info", "query", "1",
+                {"query": api},
+            )
+            maxv = int(
+                (r.json().get("data", {}) or {})
+                .get(api, {})
+                .get("maxVersion")
+                or known_max
+            )
+        except Exception:  # noqa: BLE001  (fall back to the known-good cap)
+            maxv = known_max
+        with self._lock:
+            self._api_versions[api] = maxv
+        return min(maxv, known_max)
+
+    def _api_json(
+        self,
+        api: str,
+        method: str,
+        version: str,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """GET an API and return its parsed JSON payload, raising on errors.
+
+        The Synology web API always answers HTTP 200 and signals failures
+        via `success:false` in the body. Ignoring that flag made failures
+        (e.g. an unsupported API version) look like empty results.
+
+        Returns the inner `data` object (e.g. `{"list": [...], "total": N}`
+        for `list`, or `{"count": N}` for `count`) — the callers read
+        `.get("list")` / `.get("count")` straight from it.
+        """
+        r = self._api_get(api, method, version, extra)
+        data = r.json()
+        if not data.get("success"):
+            raise SynologyError(
+                f"{api}.{method}: API error "
+                f"{data.get('error', {}).get('code')}"
+            )
+        return data.get("data") or {}
+
     def me(self) -> Optional[int]:
         """Return the syno_user_id of the logged-in user (cached).
 
@@ -225,6 +284,7 @@ class SynologyClient:
         """List items in an album or full timeline."""
         all_items = []
         offset = 0
+        version = str(self._best_version("SYNO.Foto.Browse.Item", 7))
         while True:
             extra: Dict[str, Any] = {
                 "offset": offset,
@@ -232,15 +292,13 @@ class SynologyClient:
             }
             if album_id is not None:
                 extra["album_id"] = album_id
-            r = self._api_get(
+            data = self._api_json(
                 "SYNO.Foto.Browse.Item",
                 "list",
-                "7",
+                version,
                 extra,
             )
-            chunk = (
-                r.json().get("data", {}).get("list", [])
-            )
+            chunk = data.get("list") or []
             if not chunk:
                 break
             all_items.extend(chunk)
@@ -260,16 +318,15 @@ class SynologyClient:
         """
         all_items = []
         offset = 0
+        version = str(self._best_version("SYNO.FotoTeam.Browse.Item", 7))
         while True:
-            r = self._api_get(
+            data = self._api_json(
                 "SYNO.FotoTeam.Browse.Item",
                 "list",
-                "7",
+                version,
                 {"offset": offset, "limit": limit},
             )
-            chunk = (
-                r.json().get("data", {}).get("list", [])
-            )
+            chunk = data.get("list") or []
             if not chunk:
                 break
             all_items.extend(chunk)
@@ -285,20 +342,22 @@ class SynologyClient:
         extra = {}
         if album_id:
             extra["album_id"] = album_id
-        r = self._api_get(
+        data = self._api_json(
             "SYNO.Foto.Browse.Item",
             "count",
-            "7",
+            str(self._best_version("SYNO.Foto.Browse.Item", 7)),
             extra,
         )
-        return r.json().get("data", {}).get("count", 0)
+        return data.get("count", 0)
 
     def count_shared_space_items(self) -> int:
         """Count items in Shared Space (new in v1.0.1)."""
-        r = self._api_get(
-            "SYNO.FotoTeam.Browse.Item", "count", "7"
+        data = self._api_json(
+            "SYNO.FotoTeam.Browse.Item",
+            "count",
+            str(self._best_version("SYNO.FotoTeam.Browse.Item", 7)),
         )
-        return r.json().get("data", {}).get("count", 0)
+        return data.get("count", 0)
 
     def download(
         self,

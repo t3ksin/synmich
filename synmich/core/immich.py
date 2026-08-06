@@ -127,6 +127,13 @@ class ImmichClient:
         return self._retry(_do)
 
     def create_album(self, name: str) -> str:
+        """Create an album and return its id.
+
+        If an album with the same name already exists on this Immich
+        account (e.g. a leftover from an earlier interrupted run), reuse
+        that album instead of failing — Immich rejects duplicate names
+        with HTTP 400.
+        """
         def _do():
             r = requests.post(
                 f"{self.base_url}/albums",
@@ -136,10 +143,23 @@ class ImmichClient:
                 json={"albumName": name},
                 timeout=self.timeout,
             )
+            if r.status_code == 400:
+                return None  # likely "name already taken"; handled below
             r.raise_for_status()
             return r.json()["id"]
 
-        return self._retry(_do)
+        album_id = self._retry(_do)
+        if album_id:
+            return album_id
+
+        # Name already exists → reuse the existing album.
+        for a in self.list_albums():
+            if a.get("albumName") == name:
+                return a["id"]
+        raise ImmichError(
+            f"Album '{name}' already exists on Immich, but the existing "
+            f"album could not be found"
+        )
 
     def rename_album(self, album_id: str, name: str) -> bool:
         def _do():

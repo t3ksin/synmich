@@ -2,7 +2,7 @@ FROM python:3.12-slim
 
 LABEL org.opencontainers.image.title="synmich"
 LABEL org.opencontainers.image.description="Synology Photos → Immich migration tool"
-LABEL org.opencontainers.image.source="https://github.com/schnyder/synmich"
+LABEL org.opencontainers.image.source="https://github.com/t3ksin/synmich"
 LABEL org.opencontainers.image.licenses="MIT"
 
 WORKDIR /app

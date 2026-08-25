@@ -40,6 +40,9 @@ ENV/
 htmlcov/
 .tox/
 
+# Local one-off scripts at the repo root (the tests/ package is not ignored)
+/test_*.py
+
 # Linting
 .ruff_cache/
 .mypy_cache/
@@ -53,4 +56,3 @@ checkpoint.json
 device_tokens.json
 config.yaml
 console.log
-test_*.py

@@ -127,6 +127,15 @@ class ImmichClient:
         return self._retry(_do)
 
     def create_album(self, name: str) -> str:
+        """Create an album and return its id.
+
+        If an album with the same name already exists on this Immich
+        account (e.g. a leftover from an earlier interrupted run), reuse
+        that album instead of failing — Immich rejects duplicate names
+        with HTTP 400. A 200 body that is a list (older error shape)
+        used to raise ``list indices must be integers or slices, not str``.
+        """
+
         def _do():
             r = requests.post(
                 f"{self.base_url}/albums",
@@ -136,10 +145,31 @@ class ImmichClient:
                 json={"albumName": name},
                 timeout=self.timeout,
             )
+            if r.status_code == 400:
+                return None
             r.raise_for_status()
-            return r.json()["id"]
+            try:
+                payload = r.json()
+            except ValueError as e:
+                raise ImmichError(f"invalid JSON creating album '{name}': {e}") from e
+            if isinstance(payload, dict) and payload.get("id"):
+                return payload["id"]
+            raise ImmichError(
+                f"Unexpected create-album response for '{name}': "
+                f"{payload!r}"[:240]
+            )
 
-        return self._retry(_do)
+        album_id = self._retry(_do)
+        if album_id:
+            return album_id
+
+        for a in self.list_albums():
+            if a.get("albumName") == name:
+                return a["id"]
+        raise ImmichError(
+            f"Album '{name}' already exists on Immich, but the existing "
+            f"album could not be found"
+        )
 
     def rename_album(self, album_id: str, name: str) -> bool:
         def _do():

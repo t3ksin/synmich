@@ -17,7 +17,7 @@ import tkinter as tk
 
 import customtkinter as ctk
 
-from synmich.config import get_checkpoint_file, save_config
+from synmich.config import save_config
 from synmich.core.checkpoint import Checkpoint
 from synmich.core.migrator import Migrator, MigrationControl, MigrationStats
 from synmich.gui import widgets as W
@@ -280,7 +280,7 @@ class MigrationView(ctk.CTkFrame):
         save_config(self.cfg)
         migrator = Migrator(
             config=self.cfg, sessions=self.app.sessions,
-            checkpoint=Checkpoint(get_checkpoint_file()),
+            checkpoint=Checkpoint(config=self.cfg),
             stats=self.stats, control=self.control)
         self.start_btn.configure(state="disabled")
         self.pause_btn.configure(state="normal")

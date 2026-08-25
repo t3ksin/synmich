@@ -1,5 +1,6 @@
 """synmich configuration management."""
 
+import copy
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -92,15 +93,33 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 }
 
 
+def _deep_merge(base: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str, Any]:
+    """Recursively merge overlay onto a copy of base (dicts only)."""
+    out = dict(base)
+    for k, v in overlay.items():
+        if isinstance(out.get(k), dict) and isinstance(v, dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
 def load_config(path: Optional[Path] = None) -> Dict[str, Any]:
-    """Load YAML config, merged with defaults."""
+    """Load YAML config, merged with defaults.
+
+    Missing file → {} so callers can detect first-run. A present file is
+    deep-merged onto DEFAULT_CONFIG so older configs pick up new keys
+    (execution, filters, albums_mode, …) instead of KeyError.
+    """
     if path is None:
         path = get_config_file()
     if not path.exists():
         return {}
     with open(path) as f:
         data = yaml.safe_load(f) or {}
-    return data
+    if not isinstance(data, dict):
+        return copy.deepcopy(DEFAULT_CONFIG)
+    return _deep_merge(copy.deepcopy(DEFAULT_CONFIG), data)
 
 
 def save_config(

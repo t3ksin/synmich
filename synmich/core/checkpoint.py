@@ -78,7 +78,8 @@ def _config_description(config: Dict[str, Any]) -> str:
 
 def get_checkpoints_dir() -> Path:
     """Directory where checkpoints are stored."""
-    d = Path.home() / ".config" / "synmich" / CHECKPOINTS_DIR_NAME
+    from synmich.config import get_config_dir
+    d = get_config_dir() / CHECKPOINTS_DIR_NAME
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -187,7 +188,8 @@ def migrate_legacy_checkpoint(config: Dict[str, Any]) -> Optional[Path]:
     If ~/.config/synmich/checkpoint.json exists AND already contains
     data, migrate it to the checkpoint of the current config.
     """
-    legacy = Path.home() / ".config" / "synmich" / LEGACY_CHECKPOINT_NAME
+    from synmich.config import get_checkpoint_file
+    legacy = get_checkpoint_file()
     if not legacy.exists():
         return None
 
@@ -262,7 +264,8 @@ class Checkpoint:
             self._config_hash = None
         else:
             # Fallback legacy
-            self.path = Path.home() / ".config" / "synmich" / LEGACY_CHECKPOINT_NAME
+            from synmich.config import get_checkpoint_file
+            self.path = get_checkpoint_file()
             self._config_hash = None
 
         self.lock = threading.Lock()
@@ -279,6 +282,7 @@ class Checkpoint:
             d.setdefault("timeline_done", {})
             d.setdefault("failed_items", {})
             d.setdefault("counters", {})
+            d.setdefault("shared_space_done", False)
             d["counters"].setdefault("uploaded", 0)
             d["counters"].setdefault("duplicate", 0)
             d["counters"].setdefault("failed", 0)
@@ -295,6 +299,7 @@ class Checkpoint:
             "albums_done": [],
             "timeline_done": {},
             "failed_items": {},
+            "shared_space_done": False,
             "counters": {
                 "uploaded": 0,
                 "duplicate": 0,
@@ -314,7 +319,8 @@ class Checkpoint:
 
     # Existing API (v1.0.x compat)
     def is_uploaded(self, user: str, syno_id: str) -> Optional[str]:
-        return self.data.get("syno_to_immich", {}).get(user, {}).get(str(syno_id))
+        with self.lock:
+            return self.data.get("syno_to_immich", {}).get(user, {}).get(str(syno_id))
 
     def mark_uploaded(
         self,
@@ -359,7 +365,8 @@ class Checkpoint:
             )
 
     def is_album_done(self, passphrase: str) -> bool:
-        return passphrase in self.data.get("albums_done", [])
+        with self.lock:
+            return passphrase in self.data.get("albums_done", [])
 
     def mark_album_done(self, passphrase: str) -> None:
         with self.lock:
@@ -367,15 +374,23 @@ class Checkpoint:
             if passphrase not in done:
                 done.append(passphrase)
 
-
     def is_timeline_done(self, user: str) -> bool:
         """Check if the timeline has been fully processed for this user."""
-        return self.data.get("timeline_done", {}).get(user, False) is True
+        with self.lock:
+            return self.data.get("timeline_done", {}).get(user, False) is True
 
     def mark_timeline_done(self, user: str) -> None:
         """Mark the timeline as fully processed for this user."""
         with self.lock:
             self.data.setdefault("timeline_done", {})[user] = True
+
+    def is_shared_space_done(self) -> bool:
+        with self.lock:
+            return self.data.get("shared_space_done", False) is True
+
+    def mark_shared_space_done(self) -> None:
+        with self.lock:
+            self.data["shared_space_done"] = True
 
     def mark_skipped_already_done(self) -> None:
         """Increment the counter of skipped items (already migrated)."""

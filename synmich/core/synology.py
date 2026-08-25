@@ -20,6 +20,8 @@ import urllib3
 
 urllib3.disable_warnings()
 
+log = logging.getLogger("synmich")
+
 
 class SynologyError(Exception):
     pass
@@ -32,6 +34,24 @@ def _is_shared_space(item: Dict[str, Any]) -> bool:
     accessed via the SYNO.FotoTeam.* APIs instead of SYNO.Foto.*.
     """
     return item.get("owner_user_id") == 0
+
+
+def download_unit(item: Dict[str, Any]) -> Tuple[Any, str]:
+    """Return the (unit_id, cache_key) to pass to SYNO.Foto.Download.
+
+    Duplicate-linked items (Synology Photos stores one physical file and
+    points other items at it) cannot be downloaded with the item's own
+    `id`: the NAS returns error 117. The real storage unit is exposed as
+    `additional.thumbnail.unit_id` / `cache_key`, which `list_items`
+    requests via additional=["thumbnail"].
+    """
+    item_id = item["id"]
+    thumb = (item.get("additional") or {}).get("thumbnail") or {}
+    unit_id = thumb.get("unit_id") if thumb.get("unit_id") is not None else item_id
+    cache_key = thumb.get("cache_key") or (
+        f"{item_id}_{item.get('indexed_time', 0) // 1000}"
+    )
+    return unit_id, str(cache_key)
 
 
 class SynologyClient:
@@ -62,6 +82,8 @@ class SynologyClient:
         # Lock to serialize HTTP requests on the same Session
         # (requests.Session is NOT thread-safe).
         self._lock = threading.Lock()
+        # Max supported API versions, queried once per API via SYNO.API.Info.
+        self._api_versions: Dict[str, int] = {}
 
     def _retry(self, fn, *args, **kwargs):
         last = None
@@ -177,6 +199,82 @@ class SynologyClient:
 
         return self._retry(_do)
 
+    def _best_version(self, api: str, known_max: int) -> int:
+        """Highest API version this NAS supports for `api`, capped at
+        `known_max` (the highest the code is written for).
+
+        Requesting a version above the NAS's maxVersion returns
+        `success:false` (error 104) with HTTP 200. synmich previously used
+        version "7" for SYNO.Foto.Browse.Item, which caps at 6 on most
+        DSM 7.x / Photos 1.9 boxes — list/count came back empty and albums
+        were created with zero photos migrated.
+        """
+        with self._lock:
+            cached = self._api_versions.get(api)
+        if cached is not None:
+            return min(cached, known_max)
+
+        maxv = known_max
+        # Photos 1.9 / DSM 7.x commonly cap Browse.Item at 6, not 7.
+        # If SYNO.API.Info is unreachable we still prefer 6 over 7.
+        if api.endswith(".Browse.Item") and known_max >= 6:
+            maxv = 6
+        try:
+            def _do():
+                if not self.session:
+                    raise SynologyError("Not logged in")
+                with self._lock:
+                    return self.session.get(
+                        f"{self.base_url}/webapi/query.cgi",
+                        params={
+                            "api": "SYNO.API.Info",
+                            "version": "1",
+                            "method": "query",
+                            "query": api,
+                        },
+                        verify=self.verify_ssl,
+                        timeout=self.timeout,
+                    )
+
+            r = self._retry(_do)
+            payload = r.json()
+            if payload.get("success"):
+                reported = (
+                    (payload.get("data") or {}).get(api, {}) or {}
+                ).get("maxVersion")
+                if reported:
+                    maxv = int(reported)
+        except Exception:  # noqa: BLE001
+            pass
+
+        chosen = max(1, min(maxv, known_max))
+        with self._lock:
+            self._api_versions[api] = chosen
+        return chosen
+
+    def _api_json(
+        self,
+        api: str,
+        method: str,
+        version: str,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """GET an API and return its inner `data` object, raising on errors.
+
+        The Synology web API always answers HTTP 200 and signals failures
+        via `success:false` in the body. Ignoring that flag made failures
+        (e.g. an unsupported API version) look like empty results.
+        """
+        r = self._api_get(api, method, version, extra)
+        try:
+            payload = r.json()
+        except ValueError as e:
+            raise SynologyError(f"{api}.{method}: invalid JSON: {e}") from e
+        if not payload.get("success"):
+            code = (payload.get("error") or {}).get("code")
+            raise SynologyError(f"{api}.{method}: API error {code}")
+        return payload.get("data") or {}
+
     def me(self) -> Optional[int]:
         """Return the syno_user_id of the logged-in user (cached).
 
@@ -193,11 +291,12 @@ class SynologyClient:
         """List all visible albums with sharing_info."""
         all_albums = []
         offset = 0
+        version = str(self._best_version("SYNO.Foto.Browse.Album", 5))
         while True:
-            r = self._api_get(
+            data = self._api_json(
                 "SYNO.Foto.Browse.Album",
                 "list",
-                "5",
+                version,
                 {
                     "offset": offset,
                     "limit": 500,
@@ -206,9 +305,7 @@ class SynologyClient:
                     ),
                 },
             )
-            chunk = (
-                r.json().get("data", {}).get("list", [])
-            )
+            chunk = data.get("list") or []
             if not chunk:
                 break
             all_albums.extend(chunk)
@@ -222,25 +319,29 @@ class SynologyClient:
         album_id: Optional[int] = None,
         limit: int = 5000,
     ) -> List[Dict[str, Any]]:
-        """List items in an album or full timeline."""
+        """List items in an album or full timeline.
+
+        Requests additional=["thumbnail"] so each item carries the real
+        download unit_id/cache_key (needed for duplicate-linked items).
+        """
         all_items = []
         offset = 0
+        version = str(self._best_version("SYNO.Foto.Browse.Item", 7))
         while True:
             extra: Dict[str, Any] = {
                 "offset": offset,
                 "limit": limit,
+                "additional": json.dumps(["thumbnail"]),
             }
             if album_id is not None:
                 extra["album_id"] = album_id
-            r = self._api_get(
+            data = self._api_json(
                 "SYNO.Foto.Browse.Item",
                 "list",
-                "7",
+                version,
                 extra,
             )
-            chunk = (
-                r.json().get("data", {}).get("list", [])
-            )
+            chunk = data.get("list") or []
             if not chunk:
                 break
             all_items.extend(chunk)
@@ -254,22 +355,25 @@ class SynologyClient:
     ) -> List[Dict[str, Any]]:
         """List items in the Synology Shared Space (Team library).
 
-        New in v1.0.1: uses the SYNO.FotoTeam.Browse.Item API to enumerate
-        photos and videos in the shared/team space. These items have
-        owner_user_id=0 and must be downloaded via SYNO.FotoTeam.Download.
+        Uses the SYNO.FotoTeam.Browse.Item API to enumerate photos and
+        videos in the shared/team space. These items have owner_user_id=0
+        and must be downloaded via SYNO.FotoTeam.Download.
         """
         all_items = []
         offset = 0
+        version = str(self._best_version("SYNO.FotoTeam.Browse.Item", 7))
         while True:
-            r = self._api_get(
+            data = self._api_json(
                 "SYNO.FotoTeam.Browse.Item",
                 "list",
-                "7",
-                {"offset": offset, "limit": limit},
+                version,
+                {
+                    "offset": offset,
+                    "limit": limit,
+                    "additional": json.dumps(["thumbnail"]),
+                },
             )
-            chunk = (
-                r.json().get("data", {}).get("list", [])
-            )
+            chunk = data.get("list") or []
             if not chunk:
                 break
             all_items.extend(chunk)
@@ -282,23 +386,25 @@ class SynologyClient:
         self, album_id: Optional[int] = None
     ) -> int:
         """Count total items."""
-        extra = {}
+        extra: Dict[str, Any] = {}
         if album_id:
             extra["album_id"] = album_id
-        r = self._api_get(
+        data = self._api_json(
             "SYNO.Foto.Browse.Item",
             "count",
-            "7",
+            str(self._best_version("SYNO.Foto.Browse.Item", 7)),
             extra,
         )
-        return r.json().get("data", {}).get("count", 0)
+        return data.get("count", 0)
 
     def count_shared_space_items(self) -> int:
-        """Count items in Shared Space (new in v1.0.1)."""
-        r = self._api_get(
-            "SYNO.FotoTeam.Browse.Item", "count", "7"
+        """Count items in Shared Space."""
+        data = self._api_json(
+            "SYNO.FotoTeam.Browse.Item",
+            "count",
+            str(self._best_version("SYNO.FotoTeam.Browse.Item", 7)),
         )
-        return r.json().get("data", {}).get("count", 0)
+        return data.get("count", 0)
 
     def download(
         self,
@@ -307,16 +413,13 @@ class SynologyClient:
     ) -> Optional[Path]:
         """Download an item. Returns local path or None.
 
-        Uses a fresh requests session per call to be thread-safe
-        (requests.Session shared across threads can cause data races
-        on streamed responses, leading to wrong asset bodies being
-        attributed to the wrong file).
+        Uses a fresh requests session per call (seeded with the login
+        cookies) so concurrent streamed downloads cannot corrupt each
+        other, while still sending the authenticated SID + cookies.
 
-        v1.0.1: automatically routes via SYNO.FotoTeam.Download when the
-        item belongs to the Shared Space (owner_user_id=0). Previously
-        these items would fail silently with an unhelpful JSON response,
-        leaving personal albums that contained shared-space photos empty
-        in Immich.
+        Shared Space items (owner_user_id=0) go through
+        SYNO.FotoTeam.Download. Duplicate-linked items use
+        additional.thumbnail.unit_id rather than the item's own id.
         """
         folder.mkdir(parents=True, exist_ok=True)
         original_filename = item["filename"]
@@ -327,81 +430,133 @@ class SynologyClient:
         # The original name is preserved in the upload via the
         # filename passed to Immich, this is only for local storage.
         filepath = folder / f"{item_id}_{original_filename}"
-        cache_key = (
-            f"{item_id}_"
-            f"{item.get('indexed_time', 0) // 1000}"
-        )
 
-        if not self.sid:
-            return None
-
-        # v1.0.1: route to the correct API based on item ownership.
-        # Items in the Synology Shared Space (owner_user_id=0) must be
-        # downloaded via SYNO.FotoTeam.Download. All other items use
-        # SYNO.Foto.Download (per-user library).
+        unit_id, cache_key = download_unit(item)
         download_api = (
             "SYNO.FotoTeam.Download"
             if _is_shared_space(item)
             else "SYNO.Foto.Download"
         )
 
+        with self._lock:
+            sid = self.sid
+            cookie_dict = {}
+            if self.session is not None:
+                cookie_dict = requests.utils.dict_from_cookiejar(
+                    self.session.cookies
+                )
+
+        if not sid:
+            log.warning("Download skipped %s: not logged in", original_filename)
+            return None
+
         params = {
             "api": download_api,
             "method": "download",
             "version": "1",
-            "unit_id": json.dumps([item_id]),
+            "unit_id": json.dumps([unit_id]),
             "cache_key": cache_key,
-            "_sid": self.sid,
+            "_sid": sid,
         }
 
-        def _do():
-            # Fresh session per download to avoid concurrent
-            # streaming on the shared Session.
-            return requests.get(
-                f"{self.base_url}/webapi/entry.cgi",
-                params=params,
-                verify=self.verify_ssl,
-                timeout=self.timeout,
-                stream=True,
-            )
-
-        try:
-            r = self._retry(_do)
-        except Exception:
-            return None
-
-        if r.status_code != 200:
-            return None
-
-        ctype = r.headers.get("Content-Type", "").lower()
-        if (
-            "json" in ctype
-            or "html" in ctype
-            or "text" in ctype
-        ):
-            # The API returned a JSON/HTML body instead of binary data.
-            # This usually means the wrong API was selected for this item
-            # (e.g. SYNO.Foto.Download for a shared-space item, or vice
-            # versa). v1.0.1: the routing above should prevent this, but
-            # we keep the safety net to fail closed.
-            return None
-
-        try:
-            with open(filepath, "wb") as f:
-                for chunk in r.iter_content(8192):
-                    if chunk:
-                        f.write(chunk)
-        finally:
-            r.close()
-
-        if filepath.stat().st_size == 0:
+        last_error = None
+        for attempt in range(1, self.max_retries + 1):
+            sess = requests.Session()
+            if cookie_dict:
+                sess.cookies.update(cookie_dict)
             try:
-                filepath.unlink()
-            except Exception:
-                pass
-            return None
+                r = sess.get(
+                    f"{self.base_url}/webapi/entry.cgi",
+                    params=params,
+                    verify=self.verify_ssl,
+                    timeout=self.timeout,
+                    stream=True,
+                )
+            except (
+                requests.exceptions.RequestException,
+                ConnectionError,
+            ) as e:
+                last_error = f"network: {e}"
+                sess.close()
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_backoff_s * attempt)
+                    continue
+                log.warning(
+                    "Download failed %s (id=%s unit=%s): %s",
+                    original_filename, item_id, unit_id, last_error,
+                )
+                return None
 
-        return filepath
+            if r.status_code != 200:
+                last_error = f"http_{r.status_code}"
+                r.close()
+                sess.close()
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_backoff_s * attempt)
+                    continue
+                log.warning(
+                    "Download failed %s (id=%s unit=%s): %s",
+                    original_filename, item_id, unit_id, last_error,
+                )
+                return None
+
+            ctype = r.headers.get("Content-Type", "").lower()
+            if "json" in ctype or "html" in ctype or "text" in ctype:
+                body = ""
+                try:
+                    body = r.text[:300]
+                    err = r.json()
+                    last_error = (
+                        f"api_error {(err.get('error') or {}).get('code')} "
+                        f"{body}"
+                    )
+                except Exception:  # noqa: BLE001
+                    last_error = f"non-binary {ctype}: {body[:200]}"
+                r.close()
+                sess.close()
+                # Application-level errors (e.g. 117) used to be returned
+                # as HTTP 200 + JSON and never retried, because _retry()
+                # only catches network exceptions.
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_backoff_s * attempt)
+                    continue
+                log.warning(
+                    "Download failed %s (id=%s unit=%s): %s",
+                    original_filename, item_id, unit_id, last_error,
+                )
+                return None
+
+            try:
+                with open(filepath, "wb") as f:
+                    for chunk in r.iter_content(8192):
+                        if chunk:
+                            f.write(chunk)
+            finally:
+                r.close()
+                sess.close()
+
+            if filepath.stat().st_size == 0:
+                try:
+                    filepath.unlink()
+                except Exception:
+                    pass
+                last_error = "empty_file"
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_backoff_s * attempt)
+                    continue
+                log.warning(
+                    "Download failed %s (id=%s): empty file",
+                    original_filename, item_id,
+                )
+                return None
+
+            return filepath
+
+        log.warning(
+            "Download failed %s (id=%s unit=%s): %s",
+            original_filename, item_id, unit_id, last_error,
+        )
+        return None
 
     # === Admin / Detection ===
 

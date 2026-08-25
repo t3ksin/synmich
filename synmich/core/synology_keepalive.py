@@ -126,15 +126,24 @@ class SynologyKeepalive:
         from synmich.core.synology_auth import login_with_2fa
 
         try:
+            new_session = requests.Session()
             new_sid = login_with_2fa(
-                session=requests.Session(),
+                session=new_session,
                 base_url=self.client.base_url,
                 username=self.username,
                 password=self.password,
                 verify_ssl=self.client.verify_ssl,
                 otp_provider=None,  # Must work without OTP via device_token
             )
-            self.client.sid = new_sid
+            # Swap both SID and session so cookies match the new login.
+            lock = getattr(self.client, "_lock", None)
+            if lock:
+                with lock:
+                    self.client.session = new_session
+                    self.client.sid = new_sid
+            else:
+                self.client.session = new_session
+                self.client.sid = new_sid
             log.info("Synology re-login OK, new SID acquired")
         except Exception as e:
             log.error(

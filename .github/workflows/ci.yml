@@ -30,6 +30,9 @@ jobs:
         run: |
           python -c "import synmich; import synmich.cli; import synmich.core.synology; import synmich.core.immich; import synmich.core.migrator; import synmich.core.checkpoint; import synmich.ui.theme; import synmich.ui.wizard; import synmich.ui.dashboard"
 
+      - name: Unit tests
+        run: pytest -q
+
       - name: CLI smoke test
         run: |
           synmich --version

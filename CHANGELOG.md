@@ -1,5 +1,47 @@
 # Changelog
 
+## [2.1.1] - 2026-08-25
+
+### Fixed
+
+- **Empty albums / 0 photos (issues #4, #7).** Synology Photos APIs always
+  answer HTTP 200 and signal failure with `success: false`. Listing ignored
+  that flag and requested `SYNO.Foto.Browse.Item` at version 7, which most
+  DSM 7.x / Photos 1.9 boxes cap at 6 — so list/count came back empty.
+  synmich now queries `SYNO.API.Info` for the highest supported version and
+  raises on API errors instead of treating them as an empty library.
+- **Missing photos not counted as failed (issue #6).** A download that
+  returned `None` was written to the checkpoint with an empty error but never
+  incremented the Failed counter or logged a line.
+- **Wrong photos in albums (issue #6).** Immich's `(deviceId, deviceAssetId)`
+  key used filename+size, so two files with the same name and byte size
+  collided. The key is now `{user}_synoid{synology_item_id}`.
+- **Duplicate-linked downloads (issue #6, Synology error 117).** Items that
+  share storage with another indexed photo must be downloaded with
+  `additional.thumbnail.unit_id` / `cache_key`, not the item's own id.
+- **`synmich stats` crash.** The CLI redefined `cmd_stats` and called
+  the non-existent `Checkpoint.stats()`. It now uses the detailed Immich +
+  checkpoint stats command (`--json` supported).
+- **Checkpoint path mismatch.** Migration/GUI wrote
+  `~/.config/synmich/checkpoint.json` while `synmich checkpoints` and doctor
+  used the per-config hashed files. All paths now go through the hashed
+  checkpoint (legacy files are still migrated).
+- **Immich album create.** Reuse an existing album of the same name instead
+  of failing with HTTP 400 (or `list indices must be integers…` on a list
+  payload).
+- **Keepalive re-login** now replaces the `requests.Session` (cookies) as
+  well as the SID.
+- **`load_config`** actually merges `DEFAULT_CONFIG`, so older YAML files
+  pick up new keys instead of raising `KeyError`.
+
+### Added
+
+- Shared Space items are actually migrated when `include_shared_space` is
+  set (the wizard flag was previously stored and ignored).
+- `filters.min_date` / `filters.max_date` (`YYYY-MM-DD`) are applied.
+- Unit tests (`pytest`) are run in CI.
+
+
 ## [2.1.0] - 2026-05-21
 
 ### Added

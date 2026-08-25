@@ -17,6 +17,8 @@ from synmich.core.checkpoint import Checkpoint
 
 log = logging.getLogger("synmich")
 
+_STATS_LOCK = threading.Lock()
+
 
 @dataclass
 class MigrationStats:
@@ -35,6 +37,11 @@ class MigrationStats:
     last_messages: List[str] = field(default_factory=list)
     total_messages_logged: int = 0
     start_time: float = 0.0  # v1.0.3: set when migration actually begins
+
+    def bump(self, attr: str, n: int = 1) -> None:
+        """Thread-safe increment of a numeric counter."""
+        with _STATS_LOCK:
+            setattr(self, attr, getattr(self, attr) + n)
 
     def elapsed_seconds(self) -> float:
         """v1.0.3: elapsed time since migration start."""
@@ -137,6 +144,17 @@ def album_key(owner_name: str, album: Dict[str, Any]) -> str:
     return album.get("passphrase") or f"local-{owner_name}-{album['id']}"
 
 
+def device_asset_id(uploader_name: str, syno_id: str) -> str:
+    """Immich (deviceId, deviceAssetId) uniqueness key for an asset.
+
+    Must be unique per Synology item. Using filename+size collided when
+    two photos shared a generic name and the same byte size (screenshots,
+    IMG_xxxx.HEIC): Immich returned the existing asset as a "duplicate"
+    and that unrelated photo was added to the current album.
+    """
+    return f"{uploader_name}_synoid{syno_id}"
+
+
 class Migrator:
     """Orchestrateur de migration."""
 
@@ -224,6 +242,8 @@ class Migrator:
         self.include_videos = bool(
             filters.get("include_videos", True)
         )
+        self.min_ts = self._parse_date_bound(filters.get("min_date", ""), end=False)
+        self.max_ts = self._parse_date_bound(filters.get("max_date", ""), end=True)
 
         # Work dir
         self.work_dir = Path(
@@ -244,6 +264,53 @@ class Migrator:
             return re.compile(pattern, re.IGNORECASE)
         except re.error:
             return None
+
+    @staticmethod
+    def _parse_date_bound(value: str, end: bool) -> Optional[float]:
+        """Parse a YYYY-MM-DD (or datetime) filter into a unix timestamp."""
+        if not value:
+            return None
+        value = str(value).strip()
+        try:
+            from datetime import datetime, timezone
+            for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+                try:
+                    dt = datetime.strptime(value, fmt)
+                    break
+                except ValueError:
+                    dt = None
+            else:
+                return None
+            if end and fmt == "%Y-%m-%d":
+                dt = dt.replace(hour=23, minute=59, second=59)
+            return dt.replace(tzinfo=timezone.utc).timestamp()
+        except Exception:
+            return None
+
+    def _item_timestamp(self, item: Dict[str, Any]) -> Optional[float]:
+        raw = item.get("time") or item.get("indexed_time")
+        if raw is None:
+            return None
+        try:
+            ts = float(raw)
+        except (TypeError, ValueError):
+            return None
+        # Synology sometimes reports milliseconds.
+        if ts > 1e12:
+            ts = ts / 1000.0
+        return ts
+
+    def _in_date_range(self, item: Dict[str, Any]) -> bool:
+        if self.min_ts is None and self.max_ts is None:
+            return True
+        ts = self._item_timestamp(item)
+        if ts is None:
+            return True
+        if self.min_ts is not None and ts < self.min_ts:
+            return False
+        if self.max_ts is not None and ts > self.max_ts:
+            return False
+        return True
 
     def _log(self, msg: str) -> None:
         log.info(msg)
@@ -300,6 +367,11 @@ class Migrator:
                 f"⏭ Video skipped (include_videos=false): "
                 f"{item.get('filename')}"
             )
+            self.stats.bump("skipped")
+            return None, uploader.name
+
+        if not self._in_date_range(item):
+            self.stats.bump("skipped")
             return None, uploader.name
 
         # Dry-run: just log what would be done
@@ -308,7 +380,7 @@ class Migrator:
                 f"  [DRY] Would download+upload "
                 f"{item.get('filename')} (owner={uploader.name})"
             )
-            self.stats.uploaded += 1
+            self.stats.bump("uploaded")
             return f"dry-run-{syno_id}", uploader.name
 
         # Download
@@ -318,7 +390,12 @@ class Migrator:
         filepath = uploader.syno.download(item, folder)
         if not filepath:
             self.checkpoint.mark_failed(
-                uploader.name, syno_id
+                uploader.name, syno_id, error="download_failed"
+            )
+            self.stats.bump("failed")
+            self._log(
+                f"✖ download failed: {item.get('filename')} "
+                f"(syno_id={syno_id})"
             )
             return None, uploader.name
 
@@ -343,10 +420,7 @@ class Migrator:
         asset_id, was_dup, err = uploader.immich.upload_asset(
             filepath,
             device_id=f"synology-{uploader.name}",
-            device_asset_id=(
-                f"{uploader.name}_{item['filename']}_"
-                f"{filepath.stat().st_size}"
-            ),
+            device_asset_id=device_asset_id(uploader.name, syno_id),
             file_created_at=item.get("time"),
             original_filename=item["filename"],
         )
@@ -363,14 +437,14 @@ class Migrator:
                 was_duplicate=was_dup,
             )
             if was_dup:
-                self.stats.duplicate += 1
+                self.stats.bump("duplicate")
             else:
-                self.stats.uploaded += 1
+                self.stats.bump("uploaded")
         else:
             self.checkpoint.mark_failed(
-                uploader.name, syno_id
+                uploader.name, syno_id, error=err or "upload_failed"
             )
-            self.stats.failed += 1
+            self.stats.bump("failed")
             if err:
                 self._log(
                     f"✖ {item.get('filename')}: {err}"
@@ -387,23 +461,6 @@ class Migrator:
             return
 
         name = album["name"]
-        passphrase = (
-            album.get("passphrase")
-            or f"local-{album['id']}"
-        )
-
-        # Filters
-        if not self._filter_album(name):
-            self._log(f"⏭ Filtered: {name}")
-            return
-
-        # Already done?
-        if self.checkpoint.is_album_done(passphrase):
-            self._log(f"⏭ Already done: {name}")
-            self.stats.albums_done += 1
-            return
-
-        # Determine real owner
         sharing = (
             album.get("additional", {}).get(
                 "sharing_info", {}
@@ -419,6 +476,34 @@ class Migrator:
             if _shared_oid is not None and _shared_oid > 0
             else album.get("owner_user_id")
         )
+        if owner_syno_id == 0:
+            owner_guess = self.shared_owner
+        else:
+            owner_guess = self.syno_id_to_session.get(owner_syno_id)
+        owner_name = owner_guess.name if owner_guess else ""
+        passphrase = album_key(owner_name, album) if owner_name else (
+            album.get("passphrase") or f"local-{album['id']}"
+        )
+        legacy_key = album.get("passphrase") or f"local-{album['id']}"
+
+        # Filters
+        if not self._filter_album(name):
+            self._log(f"⏭ Filtered: {name}")
+            return
+
+        # Already done? Accept the legacy local-<id> key so resumed runs
+        # after this fix don't re-migrate albums marked done by older builds.
+        if (
+            self.checkpoint.is_album_done(passphrase)
+            or (
+                legacy_key != passphrase
+                and self.checkpoint.is_album_done(legacy_key)
+            )
+        ):
+            self._log(f"⏭ Already done: {name}")
+            self.stats.albums_done += 1
+            return
+
         is_shared = bool(album.get("shared")) or bool(
             sharing.get("permission")
         )
@@ -862,7 +947,7 @@ class Migrator:
                     self._log(
                         f"✖ {item.get('filename')}: {e}"
                     )
-                    self.stats.failed += 1
+                    self.stats.bump("failed")
                 if asset_id:
                     uploaded_by_uploader.setdefault(
                         name, []
@@ -1016,6 +1101,66 @@ class Migrator:
             )
             self.checkpoint.save()
 
+    def run_shared_space(self) -> None:
+        """Migrate Synology Shared Space (FotoTeam) items.
+
+        `include_shared_space` was stored by the wizard but never used:
+        items only live in the team library (not in a personal album or
+        timeline) were skipped. Photos already uploaded via an album are
+        skipped by the checkpoint.
+        """
+        if not self.include_shared_space:
+            return
+        owner = self.shared_owner
+        if not owner:
+            self._log("⚠ Shared Space: no owner session configured, skipping")
+            return
+        if self.checkpoint.is_shared_space_done():
+            self._log("⏭ Shared Space already done")
+            return
+
+        self.stats.current_step = "shared_space"
+        self.stats.current_album = "Shared Space"
+        self._log(f"🖼 Shared Space (owner: {owner.name})...")
+
+        try:
+            items = owner.syno.list_shared_space_items()
+        except Exception as e:
+            self._log(f"✖ Shared Space list: {e}")
+            return
+
+        self._log(f"   📸 {len(items)} items")
+        if self.dry_run:
+            self.stats.items_total = len(items)
+            self.stats.items_done = len(items)
+            self.stats.bump("uploaded", len(items))
+            self.checkpoint.mark_shared_space_done()
+            self.checkpoint.save()
+            return
+
+        folder = (
+            self.work_dir / owner.output_dir_name / "_shared_space"
+        )
+        uploaded_by_uploader: Dict[str, List[str]] = {}
+        self.stats.items_total = len(items)
+        self.stats.items_done = 0
+
+        if self.workers <= 1:
+            self._process_items_sequential(
+                items, folder, uploaded_by_uploader
+            )
+        else:
+            self._process_items_parallel(
+                items, folder, uploaded_by_uploader
+            )
+
+        if not self.control.check():
+            self.checkpoint.save()
+            return
+
+        self.checkpoint.mark_shared_space_done()
+        self.checkpoint.save()
+
     def _start_keepalives(self):
         """Keep each user's Synology session alive for the whole migration.
 
@@ -1061,6 +1206,12 @@ class Migrator:
         try:
             if mig.get("include_albums", True):
                 self.run_albums()
+
+            if (
+                self.include_shared_space
+                and self.control.check()
+            ):
+                self.run_shared_space()
 
             if (
                 mig.get("include_timeline", True)

@@ -285,6 +285,7 @@ class Checkpoint:
             d.setdefault("shared_space_done", False)
             d["counters"].setdefault("uploaded", 0)
             d["counters"].setdefault("duplicate", 0)
+            d["counters"].setdefault("linked", 0)
             d["counters"].setdefault("failed", 0)
             d["counters"].setdefault("skipped_already_done", 0)
             return d
@@ -303,6 +304,7 @@ class Checkpoint:
             "counters": {
                 "uploaded": 0,
                 "duplicate": 0,
+                "linked": 0,
                 "failed": 0,
                 "skipped_already_done": 0,
             },
@@ -344,6 +346,21 @@ class Checkpoint:
             key = "duplicate" if was_duplicate else "uploaded"
             self.data["counters"][key] = (
                 self.data["counters"].get(key, 0) + 1
+            )
+
+    def mark_linked(self, user: str, syno_id: str, immich_id: str) -> None:
+        """External-library mode: record that this Synology photo was matched
+        to an existing Immich asset (no upload) and linked to the album.
+
+        Stores the syno_id -> immich_id mapping like a normal upload so resumes
+        skip it, but counts it under 'linked' rather than 'uploaded'.
+        """
+        with self.lock:
+            self.data.setdefault("syno_to_immich", {}).setdefault(user, {})[
+                str(syno_id)
+            ] = immich_id
+            self.data["counters"]["linked"] = (
+                self.data["counters"].get("linked", 0) + 1
             )
 
     def mark_duplicate(self, user: str, syno_id: str, immich_id: str) -> None:
@@ -405,6 +422,7 @@ class Checkpoint:
         return {
             "uploaded": counters.get("uploaded", 0),
             "duplicate": counters.get("duplicate", 0),
+            "linked": counters.get("linked", 0),
             "failed": counters.get("failed", 0),
             "skipped": counters.get("skipped_already_done", 0),
             "albums_done": len(self.data.get("albums_done", [])),

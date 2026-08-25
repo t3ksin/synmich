@@ -74,6 +74,10 @@ def cmd_checkpoints_show(args) -> int:
         ("Path", cp.path.name),
         ("Uploaded", f"{summary['uploaded']:,}"),
         ("Duplicates", f"{summary['duplicate']:,}"),
+    ]
+    if summary.get("linked"):
+        items.append(("Linked (external)", f"{summary['linked']:,}"))
+    items += [
         ("Failed", f"{summary['failed']:,}"),
         ("Albums done", f"{summary['albums_done']:,}"),
         ("Users tracked", ", ".join(summary['users']) or "—"),

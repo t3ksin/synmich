@@ -23,6 +23,7 @@ from synmich.gui.views.backup import BackupView
 from synmich.gui.views.migration import MigrationView
 from synmich.gui.views.settings import SettingsView
 from synmich.gui.wizard_modal import FirstLaunchWizard
+from synmich.logging_setup import setup_logging
 
 _VER = __version__  # full version string shown in the title / brand
 TAB_IMMICH = "Synology to Immich"
@@ -282,5 +283,6 @@ class SynmichApp(ctk.CTk):
 
 
 def run_gui() -> int:
+    setup_logging()
     SynmichApp().mainloop()
     return 0

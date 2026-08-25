@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-08-25
+
 ### Fixed
 
 - **Live Photos on Photos 1.9+.** When `thumbnail.unit_id` equals the item

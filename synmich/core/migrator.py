@@ -612,7 +612,7 @@ class Migrator:
         if self.external_library_mode:
             index = self._get_asset_index(uploader)
             filename = item.get("filename", "")
-            capture = item.get("time")
+            capture = self._item_timestamp(item)
             existing_id = match_existing_asset(
                 index, filename, capture, owner_name=uploader.name
             )
@@ -685,6 +685,8 @@ class Migrator:
         if not self.control.check():
             return None, uploader.name
 
+        created_at = self._item_timestamp(item)
+
         live_photo_video_id = None
         if motion_path:
             motion_name = f"{Path(item['filename']).stem}.MOV"
@@ -695,7 +697,7 @@ class Migrator:
                     device_asset_id=device_asset_id(
                         uploader.name, f"{syno_id}_motion"
                     ),
-                    file_created_at=item.get("time"),
+                    file_created_at=created_at,
                     original_filename=motion_name,
                     visibility="hidden",
                 )
@@ -710,7 +712,7 @@ class Migrator:
             filepath,
             device_id=f"synology-{uploader.name}",
             device_asset_id=device_asset_id(uploader.name, syno_id),
-            file_created_at=item.get("time"),
+            file_created_at=created_at,
             original_filename=item["filename"],
             live_photo_video_id=live_photo_video_id,
         )

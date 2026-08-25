@@ -143,3 +143,111 @@ def test_download_live_photo_forces_motion_unit_id(tmp_path):
         ("IMG_7688.MOV", 12534, "12534_1700000000"),
         ("IMG_7688.HEIC", 12542, "12542_1778357880"),
     ]
+
+
+def test_download_live_photo_falls_back_when_parts_unavailable(tmp_path):
+    client = SynologyClient("http://nas:5000")
+    item = {**_LIVE, "additional": {"thumbnail": {"unit_id": 12534}}}
+    client.download = lambda it, folder, **_k: tmp_path / it["filename"]
+    still, motion = client.download_live_photo(item, tmp_path)
+    assert still.name == "IMG_7688.HEIC"
+    assert motion is None
+
+
+def test_best_version_falls_back_to_6_when_info_fails():
+    client = SynologyClient(
+        "http://nas:5000", max_retries=1, retry_backoff_s=0
+    )
+    client.sid = "sid"
+    client.session = MagicMock()
+    client.session.get.side_effect = ConnectionError("unreachable")
+    assert client._best_version("SYNO.Foto.Browse.Item", 7) == 6
+
+
+def test_best_version_uses_reported_max():
+    client = SynologyClient("http://nas:5000", max_retries=1, retry_backoff_s=0)
+    client.sid = "sid"
+    client.session = MagicMock()
+    fake = MagicMock()
+    fake.status_code = 200
+    fake.json.return_value = {
+        "success": True,
+        "data": {"SYNO.Foto.Browse.Item": {"maxVersion": 4}},
+    }
+    client.session.get.return_value = fake
+    assert client._best_version("SYNO.Foto.Browse.Item", 7) == 4
+
+
+def test_download_retries_json_error_117_then_succeeds(tmp_path):
+    import requests as req
+
+    client = SynologyClient(
+        "http://nas:5000", max_retries=3, retry_backoff_s=0
+    )
+    client.sid = "sid"
+    client.session = MagicMock()
+    client.session.cookies = req.cookies.RequestsCookieJar()
+
+    json_resp = MagicMock()
+    json_resp.status_code = 200
+    json_resp.headers = {"Content-Type": "application/json"}
+    json_resp.text = '{"success":false}'
+    json_resp.json.return_value = {"success": False, "error": {"code": 117}}
+
+    bin_resp = MagicMock()
+    bin_resp.status_code = 200
+    bin_resp.headers = {"Content-Type": "image/jpeg"}
+    bin_resp.iter_content.return_value = [b"JPEGDATA"]
+
+    with patch("synmich.core.synology.requests.Session") as sess_cls:
+        sess = MagicMock()
+        sess_cls.return_value = sess
+        sess.get.side_effect = [json_resp, bin_resp]
+        path = client.download(
+            {"id": 10, "filename": "a.jpg", "indexed_time": 1_700_000_000_000},
+            tmp_path,
+        )
+
+    assert path is not None
+    assert path.read_bytes() == b"JPEGDATA"
+    assert sess.get.call_count == 2
+    unit = sess.get.call_args_list[0].kwargs["params"]["unit_id"]
+    assert "10" in unit
+
+
+def test_download_uses_thumbnail_unit_id_in_request(tmp_path):
+    import requests as req
+
+    client = SynologyClient(
+        "http://nas:5000", max_retries=1, retry_backoff_s=0
+    )
+    client.sid = "sid"
+    client.session = MagicMock()
+    client.session.cookies = req.cookies.RequestsCookieJar()
+
+    bin_resp = MagicMock()
+    bin_resp.status_code = 200
+    bin_resp.headers = {"Content-Type": "image/jpeg"}
+    bin_resp.iter_content.return_value = [b"JPEG"]
+
+    item = {
+        "id": 435425,
+        "filename": "watch.jpg",
+        "indexed_time": 1_700_000_000_000,
+        "additional": {
+            "thumbnail": {
+                "unit_id": 435419,
+                "cache_key": "435419_1778357880",
+            }
+        },
+    }
+    with patch("synmich.core.synology.requests.Session") as sess_cls:
+        sess = MagicMock()
+        sess_cls.return_value = sess
+        sess.get.return_value = bin_resp
+        path = client.download(item, tmp_path)
+
+    assert path is not None
+    params = sess.get.call_args.kwargs["params"]
+    assert params["unit_id"] == "[435419]"
+    assert params["cache_key"] == "435419_1778357880"

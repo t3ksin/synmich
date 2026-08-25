@@ -4,7 +4,7 @@
 
 ### Migrate Synology Photos to Immich — or a local backup — properly: albums, sharing and all.
 
-![version](https://img.shields.io/badge/version-2.2.1-1D9E75)
+![version](https://img.shields.io/badge/version-2.3.0-1D9E75)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![python](https://img.shields.io/badge/python-3.9%2B-3776AB)
 ![platform](https://img.shields.io/badge/GUI%20%2B%20CLI-1e2a36)

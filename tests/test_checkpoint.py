@@ -54,6 +54,14 @@ def test_mark_uploaded_accepts_was_duplicate(tmp_path):
     assert cp.is_uploaded("u", "1") == "imm-1"
 
 
+def test_mark_linked_is_resumable_like_upload(tmp_path):
+    cp = Checkpoint(path=tmp_path / "cp.json")
+    cp.mark_linked("u", "9", "imm-ext")
+    assert cp.is_uploaded("u", "9") == "imm-ext"
+    assert cp.get_summary()["linked"] == 1
+    assert cp.get_summary().get("uploaded", 0) == 0
+
+
 def test_shared_space_done_flag(tmp_path):
     cp = Checkpoint(path=tmp_path / "cp.json")
     assert cp.is_shared_space_done() is False

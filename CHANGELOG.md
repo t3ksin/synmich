@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [2.2.1] - 2026-08-25
+## [2.3.0] - 2026-08-25
 
 ### Added
 
@@ -55,6 +55,9 @@
   can continue.
 - **`load_config` ignored new default keys.** Older YAML files now pick up
   keys added in later versions instead of raising `KeyError`.
+- **Capture timestamps in milliseconds.** Synology sometimes reports `time`
+  in ms. That value is now converted before matching an external-library
+  asset and before sending `fileCreatedAt` to Immich.
 
 ## [2.2.0] - 2026-06-15
 

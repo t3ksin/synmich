@@ -33,6 +33,8 @@ def test_load_config_merges_defaults(tmp_path):
     assert cfg["execution"]["workers"] == DEFAULT_CONFIG["execution"]["workers"]
     assert cfg["migration"]["albums_mode"] == "all"
     assert cfg["filters"]["include_videos"] is True
+    assert cfg["migration"]["external_library_mode"] is False
+    assert cfg["migration"]["include_shared_space"] is True
     assert validate_config(cfg) == []
 
 

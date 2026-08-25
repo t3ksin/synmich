@@ -43,6 +43,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build Docker image
-        run: docker build -t synmich:test -f docker/Dockerfile .
+        run: |
+          for attempt in 1 2 3; do
+            if docker build -t synmich:test -f docker/Dockerfile .; then
+              exit 0
+            fi
+            echo "Docker Hub pull/build failed (attempt ${attempt}/3)"
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            sleep $((attempt * 15))
+          done
       - name: Test container help
         run: docker run --rm synmich:test --version

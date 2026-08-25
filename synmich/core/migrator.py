@@ -387,7 +387,13 @@ class Migrator:
         if not self.control.check():
             return None, uploader.name
 
-        filepath = uploader.syno.download(item, folder)
+        motion_path: Optional[Path] = None
+        if item.get("type") == "live":
+            filepath, motion_path = uploader.syno.download_live_photo(
+                item, folder
+            )
+        else:
+            filepath = uploader.syno.download(item, folder)
         if not filepath:
             self.checkpoint.mark_failed(
                 uploader.name, syno_id, error="download_failed"
@@ -417,19 +423,43 @@ class Migrator:
         if not self.control.check():
             return None, uploader.name
 
+        live_photo_video_id = None
+        if motion_path:
+            motion_name = f"{Path(item['filename']).stem}.MOV"
+            live_photo_video_id, _, motion_err = (
+                uploader.immich.upload_asset(
+                    motion_path,
+                    device_id=f"synology-{uploader.name}",
+                    device_asset_id=device_asset_id(
+                        uploader.name, f"{syno_id}_motion"
+                    ),
+                    file_created_at=item.get("time"),
+                    original_filename=motion_name,
+                    visibility="hidden",
+                )
+            )
+            if not live_photo_video_id:
+                self._log(
+                    f"⚠ {item.get('filename')}: motion upload failed "
+                    f"({motion_err}) — still image only"
+                )
+
         asset_id, was_dup, err = uploader.immich.upload_asset(
             filepath,
             device_id=f"synology-{uploader.name}",
             device_asset_id=device_asset_id(uploader.name, syno_id),
             file_created_at=item.get("time"),
             original_filename=item["filename"],
+            live_photo_video_id=live_photo_video_id,
         )
 
         if self.delete_after and asset_id:
-            try:
-                filepath.unlink()
-            except Exception:
-                pass
+            for local_path in (filepath, motion_path):
+                if local_path:
+                    try:
+                        local_path.unlink()
+                    except Exception:
+                        pass
 
         if asset_id:
             self.checkpoint.mark_uploaded(

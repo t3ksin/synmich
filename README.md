@@ -116,6 +116,7 @@ synmich gui                                          # 👉 launch the app
 - 🤝 **Shared albums, your way** — keep Synology's exact sharing (`mirror-syno`), give each user their own copy (`separate`), or skip sharing (`skip`). Owners and members are preserved either way.
 - 🗂️ **Albums + timeline** — bring over the full library, just the albums, or hand-pick specific albums per user.
 - 💾 **Local backup** — download a user's Synology albums straight to a folder (Synology → local), no Immich needed.
+- 📱 **Live Photos** — the HEIC still and the motion MOV are migrated as a real Immich Live Photo, not a broken `.HEIC`.
 - 🔐 **2-factor authentication (2FA)** — if an account uses Synology's 2-step verification, synmich asks for the code **once**, then stores a **trusted device token** (exactly like your browser does) so future runs never prompt again. Tokens stay only on your machine and can be wiped from **Reset → 2FA devices**.
 - ♻️ **Resumable & deduplicated** — a checkpoint records every item, and photos already in Immich are matched by **SHA1** and skipped. Stop and re-run any time, no duplicates.
 - 🩺 **Doctor** — one command checks your servers, accounts, free disk space and config, with a clear ✓ / ✗ for each.

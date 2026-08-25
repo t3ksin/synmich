@@ -242,6 +242,8 @@ class ImmichClient:
         file_created_at: Optional[float] = None,
         is_favorite: bool = False,
         original_filename: Optional[str] = None,
+        live_photo_video_id: Optional[str] = None,
+        visibility: Optional[str] = None,
     ) -> Tuple[Optional[str], bool, Optional[str]]:
         """
         Upload a file to Immich.
@@ -284,6 +286,10 @@ class ImmichClient:
                         "true" if is_favorite else "false"
                     ),
                 }
+                if live_photo_video_id:
+                    form["livePhotoVideoId"] = live_photo_video_id
+                if visibility:
+                    form["visibility"] = visibility
                 return requests.post(
                     f"{self.base_url}/assets",
                     headers=self._headers(

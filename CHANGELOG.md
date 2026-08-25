@@ -39,6 +39,9 @@
 - Shared Space items are actually migrated when `include_shared_space` is
   set (the wizard flag was previously stored and ignored).
 - `filters.min_date` / `filters.max_date` (`YYYY-MM-DD`) are applied.
+- **Live Photos.** Still HEIC + motion MOV are downloaded separately and
+  linked in Immich via `livePhotoVideoId` (previously the MOV was uploaded
+  as a broken `.HEIC`). Local backup writes both files too.
 - Unit tests (`pytest`) are run in CI.
 
 

@@ -33,3 +33,21 @@ def test_create_album_rejects_list_payload():
     with patch("synmich.core.immich.requests.post", return_value=resp):
         with pytest.raises(ImmichError, match="Unexpected create-album"):
             client.create_album("Album Name")
+
+
+def test_upload_asset_sends_live_photo_fields(tmp_path):
+    filepath = tmp_path / "IMG_7688.HEIC"
+    filepath.write_bytes(b"image")
+    response = MagicMock(status_code=201)
+    response.json.return_value = {"id": "still-id", "status": "created"}
+
+    with patch("synmich.core.immich.requests.post", return_value=response) as post:
+        result = ImmichClient("https://immich.example", "key").upload_asset(
+            filepath,
+            live_photo_video_id="motion-id",
+            visibility="hidden",
+        )
+
+    assert result == ("still-id", False, None)
+    assert post.call_args.kwargs["data"]["livePhotoVideoId"] == "motion-id"
+    assert post.call_args.kwargs["data"]["visibility"] == "hidden"

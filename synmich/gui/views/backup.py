@@ -22,6 +22,14 @@ from synmich.core.migrator import (
     album_key,
     safe_name,
 )
+
+
+def _save_item(syno, it, folder):
+    """Download one item; Live Photos drop still + motion in the same folder."""
+    if it.get("type") == "live":
+        still, motion = syno.download_live_photo(it, folder)
+        return still or motion
+    return syno.download(it, folder)
 from synmich.gui import widgets as W
 from synmich.ui.album_selector import _build_records
 
@@ -93,7 +101,7 @@ def run_backup(sessions, selected, all_mode, owner_only, dest, stats, control,
             if not control.check():
                 break
             try:
-                fp = s.syno.download(it, folder)
+                fp = _save_item(s.syno, it, folder)
             except Exception:  # noqa: BLE001
                 fp = None
             if fp:
@@ -124,7 +132,7 @@ def run_backup(sessions, selected, all_mode, owner_only, dest, stats, control,
                 if not control.check():
                     break
                 try:
-                    fp = s.syno.download(it, folder)
+                    fp = _save_item(s.syno, it, folder)
                 except Exception:  # noqa: BLE001
                     fp = None
                 if fp:

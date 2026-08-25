@@ -8,6 +8,7 @@ from synmich.core.synology import (
     SynologyClient,
     SynologyError,
     download_unit,
+    live_photo_parts,
 )
 
 
@@ -87,3 +88,58 @@ def test_list_items_requests_thumbnail_additional():
     extra = api.call_args.args[3]
     assert extra["album_id"] == 3
     assert "thumbnail" in extra["additional"]
+
+
+_LIVE = {
+    "id": 12534,
+    "filename": "IMG_7688.HEIC",
+    "type": "live",
+    "indexed_time": 1_700_000_000_000,
+    "additional": {
+        "thumbnail": {
+            "unit_id": 12542,
+            "cache_key": "12542_1778357880",
+        }
+    },
+}
+
+
+def test_live_photo_parts_splits_still_and_motion():
+    still_id, still_ck, motion_id, motion_ck = live_photo_parts(_LIVE)
+    assert still_id == 12542
+    assert still_ck == "12542_1778357880"
+    assert motion_id == 12534
+    assert motion_ck == "12534_1700000000"
+
+
+def test_live_photo_parts_none_for_duplicate_linked_jpeg():
+    item = {
+        "id": 435425,
+        "filename": "watch.jpg",
+        "type": "photo",
+        "additional": {"thumbnail": {"unit_id": 435419}},
+    }
+    assert live_photo_parts(item) is None
+
+
+def test_live_photo_parts_none_when_unit_id_matches_item():
+    item = {**_LIVE, "additional": {"thumbnail": {"unit_id": 12534}}}
+    assert live_photo_parts(item) is None
+
+
+def test_download_live_photo_forces_motion_unit_id(tmp_path):
+    client = SynologyClient("http://nas:5000")
+    calls = []
+
+    def fake_download(item, folder, unit_id=None, cache_key=None):
+        calls.append((item["filename"], unit_id, cache_key))
+        return tmp_path / item["filename"]
+
+    client.download = fake_download
+    still, motion = client.download_live_photo(_LIVE, tmp_path)
+    assert still.name == "IMG_7688.HEIC"
+    assert motion.name == "IMG_7688.MOV"
+    assert calls == [
+        ("IMG_7688.MOV", 12534, "12534_1700000000"),
+        ("IMG_7688.HEIC", 12542, "12542_1778357880"),
+    ]

@@ -36,6 +36,33 @@ def _is_shared_space(item: Dict[str, Any]) -> bool:
     return item.get("owner_user_id") == 0
 
 
+def live_photo_parts(
+    item: Dict[str, Any],
+) -> Optional[Tuple[Any, str, Any, str]]:
+    """If this is a two-file Live Photo, return still/motion download ids.
+
+    Returns ``(still_id, still_cache_key, motion_id, motion_cache_key)``
+    or ``None`` when the item is a normal photo (including duplicate-linked
+    JPEGs, which also have thumbnail.unit_id != id).
+
+    On older Synology Photos, ``item.id`` is the motion MOV and
+    ``additional.thumbnail.unit_id`` is the HEIC still, while ``filename``
+    stays ``IMG_xxxx.HEIC``. Downloading ``item.id`` as a regular asset
+    therefore saved MOV bytes under a HEIC name.
+    """
+    if item.get("type") != "live":
+        return None
+    thumb = (item.get("additional") or {}).get("thumbnail") or {}
+    still_id = thumb.get("unit_id")
+    motion_id = item.get("id")
+    if still_id is None or motion_id is None or still_id == motion_id:
+        return None
+    indexed = item.get("indexed_time", 0) // 1000
+    still_cache = thumb.get("cache_key") or f"{still_id}_{indexed}"
+    motion_cache = f"{motion_id}_{indexed}"
+    return still_id, str(still_cache), motion_id, str(motion_cache)
+
+
 def download_unit(item: Dict[str, Any]) -> Tuple[Any, str]:
     """Return the (unit_id, cache_key) to pass to SYNO.Foto.Download.
 
@@ -410,6 +437,8 @@ class SynologyClient:
         self,
         item: Dict[str, Any],
         folder: Path,
+        unit_id: Optional[Any] = None,
+        cache_key: Optional[str] = None,
     ) -> Optional[Path]:
         """Download an item. Returns local path or None.
 
@@ -419,7 +448,9 @@ class SynologyClient:
 
         Shared Space items (owner_user_id=0) go through
         SYNO.FotoTeam.Download. Duplicate-linked items use
-        additional.thumbnail.unit_id rather than the item's own id.
+        additional.thumbnail.unit_id rather than the item's own id,
+        unless ``unit_id`` / ``cache_key`` are passed explicitly (Live
+        Photo motion component).
         """
         folder.mkdir(parents=True, exist_ok=True)
         original_filename = item["filename"]
@@ -431,7 +462,8 @@ class SynologyClient:
         # filename passed to Immich, this is only for local storage.
         filepath = folder / f"{item_id}_{original_filename}"
 
-        unit_id, cache_key = download_unit(item)
+        if unit_id is None:
+            unit_id, cache_key = download_unit(item)
         download_api = (
             "SYNO.FotoTeam.Download"
             if _is_shared_space(item)
@@ -557,6 +589,37 @@ class SynologyClient:
             original_filename, item_id, unit_id, last_error,
         )
         return None
+
+    def download_live_photo(
+        self,
+        item: Dict[str, Any],
+        folder: Path,
+    ) -> Tuple[Optional[Path], Optional[Path]]:
+        """Download a Live Photo as ``(still, motion)``.
+
+        Motion is the item's own id (MOV); still is thumbnail.unit_id
+        (HEIC). Duplicate-linked non-live items must NOT go through this
+        path — they share thumbnail.unit_id for a different reason.
+        """
+        parts = live_photo_parts(item)
+        if not parts:
+            return self.download(item, folder), None
+        still_id, still_cache, motion_id, motion_cache = parts
+        original_name = item["filename"]
+        motion_name = f"{Path(original_name).stem}.MOV"
+        motion = self.download(
+            {**item, "filename": motion_name},
+            folder,
+            unit_id=motion_id,
+            cache_key=motion_cache,
+        )
+        still = self.download(
+            item,
+            folder,
+            unit_id=still_id,
+            cache_key=still_cache,
+        )
+        return still, motion
 
     # === Admin / Detection ===
 

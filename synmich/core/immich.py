@@ -126,15 +126,32 @@ class ImmichClient:
 
         return self._retry(_do)
 
+    def _find_album_id(self, name: str) -> Optional[str]:
+        """Return an existing album id for ``name``, preferring the fullest."""
+        matches = [
+            a for a in self.list_albums() if a.get("albumName") == name
+        ]
+        if not matches:
+            return None
+        matches.sort(
+            key=lambda a: a.get("assetCount") or 0,
+            reverse=True,
+        )
+        return matches[0].get("id")
+
     def create_album(self, name: str) -> str:
         """Create an album and return its id.
 
-        If an album with the same name already exists on this Immich
-        account (e.g. a leftover from an earlier interrupted run), reuse
-        that album instead of failing — Immich rejects duplicate names
-        with HTTP 400. A 200 body that is a list (older error shape)
-        used to raise ``list indices must be integers or slices, not str``.
+        Reuse an existing album of the same name when present. Older Immich
+        rejected duplicate names with HTTP 400; current Immich allows two
+        albums with the same name, so we must look up first or a second
+        empty album is created. A 200 body that is a list (older error
+        shape) used to raise ``list indices must be integers or slices,
+        not str``.
         """
+        existing = self._find_album_id(name)
+        if existing:
+            return existing
 
         def _do():
             r = requests.post(
@@ -163,9 +180,9 @@ class ImmichClient:
         if album_id:
             return album_id
 
-        for a in self.list_albums():
-            if a.get("albumName") == name:
-                return a["id"]
+        existing = self._find_album_id(name)
+        if existing:
+            return existing
         raise ImmichError(
             f"Album '{name}' already exists on Immich, but the existing "
             f"album could not be found"

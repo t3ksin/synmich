@@ -1,9 +1,11 @@
 """Client Synology Photos API."""
 
+import io
 import json
 import logging
 import threading
 import time
+import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -61,6 +63,46 @@ def live_photo_parts(
     still_cache = thumb.get("cache_key") or f"{still_id}_{indexed}"
     motion_cache = f"{motion_id}_{indexed}"
     return still_id, str(still_cache), motion_id, str(motion_cache)
+
+
+_STILL_EXTS = {
+    ".heic", ".heif", ".jpg", ".jpeg", ".png", ".webp", ".dng", ".tif", ".tiff",
+}
+_MOTION_EXTS = {".mov", ".mp4", ".m4v"}
+
+
+def extract_live_bundle(
+    data: bytes,
+) -> Optional[Tuple[str, bytes, str, bytes]]:
+    """If ``data`` is a Synology Live Photo zip, return still + motion.
+
+    Photos 1.9+ often stores a Live Photo as one item whose ``unit_id``
+    equals ``item.id``. Downloading by ``unit_id`` then yields only the
+    HEIC; downloading by ``item_id`` yields a zip with the HEIC and MOV.
+    """
+    if not data.startswith(b"PK"):
+        return None
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        return None
+    still: Optional[Tuple[str, bytes]] = None
+    motion: Optional[Tuple[str, bytes]] = None
+    for info in zf.infolist():
+        if info.is_dir() or info.file_size <= 0:
+            continue
+        name = Path(info.filename).name
+        if not name or name.startswith("."):
+            continue
+        ext = Path(name).suffix.lower()
+        payload = zf.read(info.filename)
+        if ext in _MOTION_EXTS and motion is None:
+            motion = (name, payload)
+        elif ext in _STILL_EXTS and still is None:
+            still = (name, payload)
+    if still and motion:
+        return still[0], still[1], motion[0], motion[1]
+    return None
 
 
 def download_unit(item: Dict[str, Any]) -> Tuple[Any, str]:
@@ -597,29 +639,163 @@ class SynologyClient:
     ) -> Tuple[Optional[Path], Optional[Path]]:
         """Download a Live Photo as ``(still, motion)``.
 
-        Motion is the item's own id (MOV); still is thumbnail.unit_id
-        (HEIC). Duplicate-linked non-live items must NOT go through this
-        path — they share thumbnail.unit_id for a different reason.
+        Two Synology layouts exist:
+
+        * Older Photos: ``item.id`` is the MOV and ``thumbnail.unit_id``
+          is the HEIC (``live_photo_parts``).
+        * Photos 1.9+: both share the same id; ``unit_id`` download is
+          the HEIC only, while ``item_id`` download is a zip of HEIC+MOV.
         """
         parts = live_photo_parts(item)
-        if not parts:
-            return self.download(item, folder), None
-        still_id, still_cache, motion_id, motion_cache = parts
-        original_name = item["filename"]
-        motion_name = f"{Path(original_name).stem}.MOV"
-        motion = self.download(
-            {**item, "filename": motion_name},
-            folder,
-            unit_id=motion_id,
-            cache_key=motion_cache,
+        if parts:
+            still_id, still_cache, motion_id, motion_cache = parts
+            original_name = item["filename"]
+            motion_name = f"{Path(original_name).stem}.MOV"
+            motion = self.download(
+                {**item, "filename": motion_name},
+                folder,
+                unit_id=motion_id,
+                cache_key=motion_cache,
+            )
+            still = self.download(
+                item,
+                folder,
+                unit_id=still_id,
+                cache_key=still_cache,
+            )
+            return still, motion
+
+        if item.get("type") == "live":
+            bundled = self._download_live_zip(item, folder)
+            if bundled[0] is not None:
+                return bundled
+
+        return self.download(item, folder), None
+
+    def _download_live_zip(
+        self,
+        item: Dict[str, Any],
+        folder: Path,
+    ) -> Tuple[Optional[Path], Optional[Path]]:
+        """Download a Live Photo via ``item_id`` and extract HEIC + MOV."""
+        raw = self._download_item_id_bytes(item)
+        if not raw:
+            return None, None
+        extracted = extract_live_bundle(raw)
+        if not extracted:
+            return None, None
+        still_name, still_bytes, motion_name, motion_bytes = extracted
+        folder.mkdir(parents=True, exist_ok=True)
+        item_id = item["id"]
+        still_path = folder / f"{item_id}_{still_name}"
+        motion_path = folder / f"{item_id}_{motion_name}"
+        still_path.write_bytes(still_bytes)
+        motion_path.write_bytes(motion_bytes)
+        return still_path, motion_path
+
+    def _download_item_id_bytes(self, item: Dict[str, Any]) -> Optional[bytes]:
+        """GET SYNO.Foto.Download with ``item_id`` (zip for Live Photos)."""
+        item_id = item["id"]
+        download_api = (
+            "SYNO.FotoTeam.Download"
+            if _is_shared_space(item)
+            else "SYNO.Foto.Download"
         )
-        still = self.download(
-            item,
-            folder,
-            unit_id=still_id,
-            cache_key=still_cache,
+        with self._lock:
+            sid = self.sid
+            cookie_dict = {}
+            if self.session is not None:
+                cookie_dict = requests.utils.dict_from_cookiejar(
+                    self.session.cookies
+                )
+        if not sid:
+            return None
+
+        params = {
+            "api": download_api,
+            "method": "download",
+            "version": "1",
+            "item_id": json.dumps([item_id]),
+            "_sid": sid,
+        }
+        last_error = None
+        for attempt in range(1, self.max_retries + 1):
+            sess = requests.Session()
+            if cookie_dict:
+                sess.cookies.update(cookie_dict)
+            if self.session is not None:
+                for hdr in ("Origin", "Referer", "User-Agent"):
+                    if hdr in self.session.headers:
+                        sess.headers[hdr] = self.session.headers[hdr]
+            try:
+                r = sess.get(
+                    f"{self.base_url}/webapi/entry.cgi",
+                    params=params,
+                    verify=self.verify_ssl,
+                    timeout=self.timeout,
+                    stream=True,
+                )
+            except (
+                requests.exceptions.RequestException,
+                ConnectionError,
+            ) as e:
+                last_error = f"network: {e}"
+                sess.close()
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_backoff_s * attempt)
+                    continue
+                log.warning(
+                    "Live zip download failed %s (id=%s): %s",
+                    item.get("filename"), item_id, last_error,
+                )
+                return None
+
+            if r.status_code != 200:
+                last_error = f"http_{r.status_code}"
+                r.close()
+                sess.close()
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_backoff_s * attempt)
+                    continue
+                log.warning(
+                    "Live zip download failed %s (id=%s): %s",
+                    item.get("filename"), item_id, last_error,
+                )
+                return None
+
+            ctype = r.headers.get("Content-Type", "").lower()
+            buf = io.BytesIO()
+            try:
+                for chunk in r.iter_content(8192):
+                    if chunk:
+                        buf.write(chunk)
+            finally:
+                r.close()
+                sess.close()
+            data = buf.getvalue()
+            if "json" in ctype or "html" in ctype or "text" in ctype:
+                last_error = f"non-binary {ctype}"
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_backoff_s * attempt)
+                    continue
+                log.warning(
+                    "Live zip download failed %s (id=%s): %s",
+                    item.get("filename"), item_id, last_error,
+                )
+                return None
+            if not data:
+                last_error = "empty_file"
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_backoff_s * attempt)
+                    continue
+                return None
+            return data
+
+        log.warning(
+            "Live zip download failed %s (id=%s): %s",
+            item.get("filename"), item_id, last_error,
         )
-        return still, motion
+        return None
 
     # === Admin / Detection ===
 

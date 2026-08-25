@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Live Photos on Photos 1.9+.** When `thumbnail.unit_id` equals the item
+  id, a `unit_id` download is only the HEIC. synmich now also downloads by
+  `item_id`, which returns a zip of the HEIC plus the motion MOV, and links
+  both in Immich. The older two-unit layout is unchanged.
+- **Immich duplicate album names.** Current Immich accepts two albums with
+  the same name (HTTP 201) instead of HTTP 400. `create_album` now looks up
+  an existing album first (preferring the one with more assets) so a second
+  empty album is not created.
+
 ## [2.3.0] - 2026-08-25
 
 ### Added

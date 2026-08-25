@@ -8,6 +8,7 @@ from synmich.core.synology import (
     SynologyClient,
     SynologyError,
     download_unit,
+    extract_live_bundle,
     live_photo_parts,
 )
 
@@ -145,13 +146,69 @@ def test_download_live_photo_forces_motion_unit_id(tmp_path):
     ]
 
 
+def test_extract_live_bundle_splits_heic_and_mov():
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("IMG_1786.HEIC", b"heic-bytes")
+        zf.writestr("IMG_1786.MOV", b"mov-bytes")
+    still_name, still, motion_name, motion = extract_live_bundle(buf.getvalue())
+    assert still_name == "IMG_1786.HEIC"
+    assert still == b"heic-bytes"
+    assert motion_name == "IMG_1786.MOV"
+    assert motion == b"mov-bytes"
+
+
+def test_extract_live_bundle_none_for_plain_heic():
+    assert extract_live_bundle(b"\x00\x00\x00\x18ftypheic") is None
+
+
 def test_download_live_photo_falls_back_when_parts_unavailable(tmp_path):
     client = SynologyClient("http://nas:5000")
     item = {**_LIVE, "additional": {"thumbnail": {"unit_id": 12534}}}
+    client._download_live_zip = lambda it, folder: (None, None)
     client.download = lambda it, folder, **_k: tmp_path / it["filename"]
     still, motion = client.download_live_photo(item, tmp_path)
     assert still.name == "IMG_7688.HEIC"
     assert motion is None
+
+
+def test_download_live_photo_extracts_item_id_zip(tmp_path):
+    import io
+    import zipfile
+
+    import requests as req
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("IMG_7688.HEIC", b"heic-bytes")
+        zf.writestr("IMG_7688.MOV", b"mov-bytes")
+    zip_bytes = buf.getvalue()
+
+    client = SynologyClient("http://nas:5000", max_retries=1, retry_backoff_s=0)
+    client.sid = "sid"
+    client.session = MagicMock()
+    client.session.cookies = req.cookies.RequestsCookieJar()
+
+    zip_resp = MagicMock()
+    zip_resp.status_code = 200
+    zip_resp.headers = {"Content-Type": "application/zip"}
+    zip_resp.iter_content.return_value = [zip_bytes]
+
+    item = {**_LIVE, "additional": {"thumbnail": {"unit_id": 12534}}}
+    with patch("synmich.core.synology.requests.Session") as sess_cls:
+        sess = MagicMock()
+        sess_cls.return_value = sess
+        sess.get.return_value = zip_resp
+        still, motion = client.download_live_photo(item, tmp_path)
+
+    assert still is not None and still.read_bytes() == b"heic-bytes"
+    assert motion is not None and motion.read_bytes() == b"mov-bytes"
+    params = sess.get.call_args.kwargs["params"]
+    assert params["item_id"] == "[12534]"
+    assert "unit_id" not in params
 
 
 def test_best_version_falls_back_to_6_when_info_fails():

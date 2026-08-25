@@ -126,7 +126,33 @@ class ImmichClient:
 
         return self._retry(_do)
 
+    def _find_album_id(self, name: str) -> Optional[str]:
+        """Return an existing album id for ``name``, preferring the fullest."""
+        matches = [
+            a for a in self.list_albums() if a.get("albumName") == name
+        ]
+        if not matches:
+            return None
+        matches.sort(
+            key=lambda a: a.get("assetCount") or 0,
+            reverse=True,
+        )
+        return matches[0].get("id")
+
     def create_album(self, name: str) -> str:
+        """Create an album and return its id.
+
+        Reuse an existing album of the same name when present. Older Immich
+        rejected duplicate names with HTTP 400; current Immich allows two
+        albums with the same name, so we must look up first or a second
+        empty album is created. A 200 body that is a list (older error
+        shape) used to raise ``list indices must be integers or slices,
+        not str``.
+        """
+        existing = self._find_album_id(name)
+        if existing:
+            return existing
+
         def _do():
             r = requests.post(
                 f"{self.base_url}/albums",
@@ -136,10 +162,31 @@ class ImmichClient:
                 json={"albumName": name},
                 timeout=self.timeout,
             )
+            if r.status_code == 400:
+                return None
             r.raise_for_status()
-            return r.json()["id"]
+            try:
+                payload = r.json()
+            except ValueError as e:
+                raise ImmichError(f"invalid JSON creating album '{name}': {e}") from e
+            if isinstance(payload, dict) and payload.get("id"):
+                return payload["id"]
+            raise ImmichError(
+                f"Unexpected create-album response for '{name}': "
+                f"{payload!r}"[:240]
+            )
 
-        return self._retry(_do)
+        album_id = self._retry(_do)
+        if album_id:
+            return album_id
+
+        existing = self._find_album_id(name)
+        if existing:
+            return existing
+        raise ImmichError(
+            f"Album '{name}' already exists on Immich, but the existing "
+            f"album could not be found"
+        )
 
     def rename_album(self, album_id: str, name: str) -> bool:
         def _do():
@@ -212,6 +259,8 @@ class ImmichClient:
         file_created_at: Optional[float] = None,
         is_favorite: bool = False,
         original_filename: Optional[str] = None,
+        live_photo_video_id: Optional[str] = None,
+        visibility: Optional[str] = None,
     ) -> Tuple[Optional[str], bool, Optional[str]]:
         """
         Upload a file to Immich.
@@ -254,6 +303,10 @@ class ImmichClient:
                         "true" if is_favorite else "false"
                     ),
                 }
+                if live_photo_video_id:
+                    form["livePhotoVideoId"] = live_photo_video_id
+                if visibility:
+                    form["visibility"] = visibility
                 return requests.post(
                     f"{self.base_url}/assets",
                     headers=self._headers(
@@ -347,3 +400,142 @@ class ImmichClient:
             return r.json()
 
         return self._retry(_do)
+
+    def iter_assets(self, page_size: int = 1000):
+        """Yield every asset visible to this API key, across ALL libraries
+        (the user's upload library AND any external libraries).
+
+        Paginates POST /search/metadata. `withExif` is requested so each
+        item carries `exifInfo.dateTimeOriginal`, which external-library
+        mode needs to disambiguate same-named photos.
+
+        Why this exists: Immich stores a *dummy* checksum for
+        external-library assets — `sha1('path:' + originalPath)`, not a hash
+        of the file's bytes (confirmed in immich-app/immich#7804). So a
+        content-checksum dedup can never match a file that lives in an
+        external library; matching has to be done on metadata instead.
+        """
+        page = 1
+        while True:
+            def _do(p=page):
+                r = requests.post(
+                    f"{self.base_url}/search/metadata",
+                    headers=self._headers(
+                        {"Content-Type": "application/json"}
+                    ),
+                    json={
+                        "page": p,
+                        "size": page_size,
+                        "withExif": True,
+                    },
+                    timeout=self.timeout,
+                )
+                r.raise_for_status()
+                return r.json()
+
+            data = self._retry(_do)
+            assets = data.get("assets", {}) or {}
+            for it in assets.get("items", []) or []:
+                yield it
+            nxt = assets.get("nextPage")
+            if not nxt:
+                break
+            try:
+                page = int(nxt)
+            except (TypeError, ValueError):
+                break
+
+    def build_filename_index(
+        self, page_size: int = 1000
+    ) -> Dict[str, List[Tuple[str, Optional[str], Optional[str], Optional[str]]]]:
+        """Index existing Immich assets by filename for external-library mode.
+
+        Returns
+        {originalFileName.lower(): [(asset_id, dateTimeOriginal, libraryId, originalPath), …]}
+        covering every asset this key can see (external libraries included).
+        Multiple entries per name are kept so the caller can disambiguate by
+        capture date when a filename isn't unique, and `libraryId` lets it
+        prefer the external asset over a leftover upload-library copy. The
+        path lets the matcher break ties when the same external asset exists
+        in more than one Immich external library.
+        """
+        index: Dict[
+            str, List[Tuple[str, Optional[str], Optional[str], Optional[str]]]
+        ] = {}
+        for a in self.iter_assets(page_size=page_size):
+            name = a.get("originalFileName")
+            aid = a.get("id")
+            if not name or not aid:
+                continue
+            dto = (a.get("exifInfo") or {}).get("dateTimeOriginal")
+            index.setdefault(name.lower(), []).append(
+                (aid, dto, a.get("libraryId"), a.get("originalPath"))
+            )
+        return index
+
+    def find_assets_by_filename(
+        self, filename: str, page_size: int = 250
+    ) -> List[Tuple[str, Optional[str], Optional[str], Optional[str]]]:
+        """Exact-name lookup for a single filename (external-library fallback).
+
+        build_filename_index() paginates the *whole* library with
+        POST /search/metadata, which orders by a non-unique key
+        (`fileCreatedAt`) and uses offset pagination — so on large libraries
+        with many identical timestamps (duplicates, burst shots) it silently
+        skips assets at page boundaries, and a file that really is in Immich
+        can be missing from the bulk index. This re-checks one filename
+        directly: the `originalFileName` filter narrows the DB scan to a
+        handful of rows, so the same pagination weakness no longer bites.
+
+        Immich treats `originalFileName` as a substring `ILIKE`, so we
+        re-filter the results down to an exact (case-insensitive) name match.
+        Returns [(asset_id, dateTimeOriginal, libraryId, originalPath), ...].
+        """
+        if not filename:
+            return []
+        target = filename.lower()
+        results: List[
+            Tuple[str, Optional[str], Optional[str], Optional[str]]
+        ] = []
+        page = 1
+        while True:
+            def _do(p=page):
+                r = requests.post(
+                    f"{self.base_url}/search/metadata",
+                    headers=self._headers(
+                        {"Content-Type": "application/json"}
+                    ),
+                    json={
+                        "page": p,
+                        "size": page_size,
+                        "originalFileName": filename,
+                        "withExif": True,
+                    },
+                    timeout=self.timeout,
+                )
+                r.raise_for_status()
+                return r.json()
+
+            data = self._retry(_do)
+            assets = data.get("assets", {}) or {}
+            for it in assets.get("items", []) or []:
+                name = it.get("originalFileName")
+                aid = it.get("id")
+                if not name or not aid:
+                    continue
+                if name.lower() != target:
+                    continue
+                dto = (it.get("exifInfo") or {}).get(
+                    "dateTimeOriginal"
+                )
+                results.append(
+                    (aid, dto, it.get("libraryId"), it.get("originalPath"))
+                )
+            nxt = assets.get("nextPage")
+            if not nxt:
+                break
+            try:
+                page = int(nxt)
+            except (TypeError, ValueError):
+                break
+        return results

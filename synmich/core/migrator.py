@@ -7,15 +7,140 @@ from concurrent.futures import (
     ThreadPoolExecutor,
     as_completed,
 )
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from synmich.core.synology import SynologyClient
 from synmich.core.immich import ImmichClient
 from synmich.core.checkpoint import Checkpoint
 
 log = logging.getLogger("synmich")
+
+_STATS_LOCK = threading.Lock()
+
+# Tolerance (seconds) when disambiguating same-named photos by capture date
+# in external-library mode. Generous enough to absorb rounding / sub-second
+# differences between Synology's capture time and Immich's dateTimeOriginal,
+# tight enough that two genuinely different shots won't be confused.
+_DATE_MATCH_TOLERANCE_S = 120
+
+_ISO_RE = re.compile(
+    r"(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})"
+    r"(?:\.(\d+))?(Z|[+-]\d{2}:?\d{2})?"
+)
+
+
+def _iso_to_epoch(value: Optional[str]) -> Optional[float]:
+    """Parse an Immich `dateTimeOriginal` into a UTC epoch.
+
+    Hand-rolled rather than datetime.fromisoformat because Python 3.9/3.10
+    reject offsets like `+00:00` combined with 2-digit fractional seconds
+    (`...:48.41+00:00`), which is exactly the shape Immich returns.
+    """
+    if not value:
+        return None
+    m = _ISO_RE.match(value.strip())
+    if not m:
+        return None
+    y, mo, d, hh, mm, ss = (int(m.group(i)) for i in range(1, 7))
+    tz = m.group(8)
+    if tz and tz != "Z":
+        sign = 1 if tz[0] == "+" else -1
+        tz = tz[1:].replace(":", "")
+        offset = timedelta(hours=int(tz[:2]), minutes=int(tz[2:4]))
+        tzinfo = timezone(sign * offset)
+    else:
+        tzinfo = timezone.utc
+    try:
+        return datetime(y, mo, d, hh, mm, ss, tzinfo=tzinfo).timestamp()
+    except ValueError:
+        return None
+
+
+def match_existing_asset(
+    index: Dict[str, List[Tuple]],
+    filename: str,
+    capture_epoch: Optional[float],
+    owner_name: Optional[str] = None,
+) -> Optional[str]:
+    """Find an Immich asset already holding this Synology photo.
+
+    `index` is ImmichClient.build_filename_index() output:
+    {filename.lower(): [(asset_id, dateTimeOriginal, libraryId, originalPath), ...]}.
+    Plain 2- and 3-tuples from older indexes/tests are also accepted.
+
+    A single same-named asset is taken as the match (filename is the strong
+    key — e.g. nino's `2025-09-18_12-54-48_IMG_6054.HEIC` prefix is unique).
+    When several assets share the filename, we disambiguate by capture date
+    and require a hit within _DATE_MATCH_TOLERANCE_S; if none qualifies we
+    return None so the caller uploads rather than risk linking the wrong shot.
+
+    When more than one asset qualifies — e.g. the photo exists both as an
+    external-library asset and as a leftover copy in the upload library from
+    an earlier run — the external one (`libraryId` set) is preferred, so we
+    link to the media kept external rather than to a re-uploaded duplicate.
+
+    If multiple external-library assets still qualify (same filename and
+    capture date in more than one external library), prefer the one whose
+    originalPath contains the current Synology user's name as a path segment.
+    """
+    candidates = index.get(filename.lower())
+    if not candidates:
+        return None
+
+    # Normalise to (asset_id, dateTimeOriginal, library_id, original_path).
+    # library_id is None for upload-library assets and set for external ones.
+    norm = [
+        (
+            c[0],
+            c[1] if len(c) > 1 else None,
+            c[2] if len(c) > 2 else None,
+            c[3] if len(c) > 3 else None,
+        )
+        for c in candidates
+    ]
+
+    if len(norm) == 1:
+        return norm[0][0]
+
+    # If exactly one external-library asset has this exact filename, prefer it
+    # even when video metadata timestamps disagree. Some cameras/containers
+    # expose video capture times in a different zone than Synology's album item
+    # time; the exact filename is still stronger than leftover upload copies.
+    external = [c for c in norm if c[2] is not None]
+    if len(external) == 1:
+        return external[0][0]
+
+    if capture_epoch is None:
+        return None
+
+    owner = (owner_name or "").strip().lower()
+
+    def owner_path_match(path: Optional[str]) -> bool:
+        if not owner or not path:
+            return False
+        parts = [p.lower() for p in re.split(r"[\\/]+", str(path)) if p]
+        return owner in parts
+
+    # Keep every same-named asset whose capture date is within tolerance, then
+    # prefer external assets. If date proximity ties, prefer the external path
+    # that belongs to the current Synology user.
+    qualifying = []  # (is_upload_copy, date_diff, not_owner_path, asset_id)
+    for aid, dto, lib, path in norm:
+        ep = _iso_to_epoch(dto)
+        if ep is None:
+            continue
+        diff = abs(ep - capture_epoch)
+        if diff <= _DATE_MATCH_TOLERANCE_S:
+            qualifying.append(
+                (lib is None, diff, not owner_path_match(path), aid)
+            )
+    if not qualifying:
+        return None
+    qualifying.sort(key=lambda q: (q[0], q[1], q[2]))
+    return qualifying[0][3]
 
 
 @dataclass
@@ -24,6 +149,10 @@ class MigrationStats:
 
     uploaded: int = 0
     duplicate: int = 0
+    # External-library mode: photo already present in Immich (matched by
+    # filename + capture date), so we linked the existing asset to the album
+    # instead of re-uploading it.
+    linked: int = 0
     failed: int = 0
     skipped: int = 0
     albums_done: int = 0
@@ -35,6 +164,11 @@ class MigrationStats:
     last_messages: List[str] = field(default_factory=list)
     total_messages_logged: int = 0
     start_time: float = 0.0  # v1.0.3: set when migration actually begins
+
+    def bump(self, attr: str, n: int = 1) -> None:
+        """Thread-safe increment of a numeric counter."""
+        with _STATS_LOCK:
+            setattr(self, attr, getattr(self, attr) + n)
 
     def elapsed_seconds(self) -> float:
         """v1.0.3: elapsed time since migration start."""
@@ -137,6 +271,17 @@ def album_key(owner_name: str, album: Dict[str, Any]) -> str:
     return album.get("passphrase") or f"local-{owner_name}-{album['id']}"
 
 
+def device_asset_id(uploader_name: str, syno_id: str) -> str:
+    """Immich (deviceId, deviceAssetId) uniqueness key for an asset.
+
+    Must be unique per Synology item. Using filename+size collided when
+    two photos shared a generic name and the same byte size (screenshots,
+    IMG_xxxx.HEIC): Immich returned the existing asset as a "duplicate"
+    and that unrelated photo was added to the current album.
+    """
+    return f"{uploader_name}_synoid{syno_id}"
+
+
 class Migrator:
     """Orchestrateur de migration."""
 
@@ -213,6 +358,33 @@ class Migrator:
             exec_cfg.get("delete_after_upload", True)
         )
 
+        # External-library mode (v2.2.0). When the photos already live in
+        # Immich via an *external library*, re-uploading them creates a second
+        # copy in the upload library — Immich's content-checksum dedup can't
+        # catch it because external assets carry a dummy path-based checksum
+        # (immich-app/immich#7804). In this mode we instead match each Synology
+        # photo to the existing asset by filename + capture date and just add
+        # that asset to the album, downloading nothing. If no match is found we
+        # fall back to a normal upload so a photo is never silently dropped.
+        self.external_library_mode = bool(
+            mig.get("external_library_mode", False)
+        )
+        # Lazily-built filename index per uploader (keyed by uploader name);
+        # each Immich user sees a different set of assets, so indexes aren't
+        # shared. Guarded because uploads run on a thread pool.
+        self._asset_index: Dict[
+            str, Dict[str, List[Tuple[str, Optional[str], Optional[str]]]]
+        ] = {}
+        self._asset_index_lock = threading.Lock()
+        # Per-(uploader, filename) cache for the targeted fallback lookup we
+        # run when the bulk index misses a name (the bulk scan can drop assets
+        # at page boundaries). Caches negatives too, so a genuinely-absent
+        # file is queried at most once.
+        self._fallback_cache: Dict[
+            Tuple[str, str], List[Tuple[str, Optional[str], Optional[str]]]
+        ] = {}
+        self._fallback_lock = threading.Lock()
+
         # Filters
         filters = config.get("filters", {})
         self.include_re = self._compile_re(
@@ -224,6 +396,8 @@ class Migrator:
         self.include_videos = bool(
             filters.get("include_videos", True)
         )
+        self.min_ts = self._parse_date_bound(filters.get("min_date", ""), end=False)
+        self.max_ts = self._parse_date_bound(filters.get("max_date", ""), end=True)
 
         # Work dir
         self.work_dir = Path(
@@ -244,6 +418,53 @@ class Migrator:
             return re.compile(pattern, re.IGNORECASE)
         except re.error:
             return None
+
+    @staticmethod
+    def _parse_date_bound(value: str, end: bool) -> Optional[float]:
+        """Parse a YYYY-MM-DD (or datetime) filter into a unix timestamp."""
+        if not value:
+            return None
+        value = str(value).strip()
+        try:
+            from datetime import datetime, timezone
+            for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+                try:
+                    dt = datetime.strptime(value, fmt)
+                    break
+                except ValueError:
+                    dt = None
+            else:
+                return None
+            if end and fmt == "%Y-%m-%d":
+                dt = dt.replace(hour=23, minute=59, second=59)
+            return dt.replace(tzinfo=timezone.utc).timestamp()
+        except Exception:
+            return None
+
+    def _item_timestamp(self, item: Dict[str, Any]) -> Optional[float]:
+        raw = item.get("time") or item.get("indexed_time")
+        if raw is None:
+            return None
+        try:
+            ts = float(raw)
+        except (TypeError, ValueError):
+            return None
+        # Synology sometimes reports milliseconds.
+        if ts > 1e12:
+            ts = ts / 1000.0
+        return ts
+
+    def _in_date_range(self, item: Dict[str, Any]) -> bool:
+        if self.min_ts is None and self.max_ts is None:
+            return True
+        ts = self._item_timestamp(item)
+        if ts is None:
+            return True
+        if self.min_ts is not None and ts < self.min_ts:
+            return False
+        if self.max_ts is not None and ts > self.max_ts:
+            return False
+        return True
 
     def _log(self, msg: str) -> None:
         log.info(msg)
@@ -271,6 +492,70 @@ class Migrator:
         if owner_user_id == 0:
             return self.shared_owner
         return self.syno_id_to_session.get(owner_user_id)
+
+    def _get_asset_index(
+        self, uploader: UserSession
+    ) -> Dict[str, List[Tuple[str, Optional[str], Optional[str]]]]:
+        """Return (building once) the filename index for an uploader.
+
+        Built lazily and cached per uploader. The build is done under a lock
+        so that, when the worker pool first hits external-library mode, we
+        scan each user's library once instead of N times in parallel.
+        """
+        with self._asset_index_lock:
+            idx = self._asset_index.get(uploader.name)
+            if idx is not None:
+                return idx
+            self._log(
+                f"🔎 Indexing existing Immich assets for "
+                f"{uploader.name} (external-library mode)…"
+            )
+            try:
+                idx = uploader.immich.build_filename_index()
+            except Exception as e:
+                self._log(
+                    f"⚠ Could not index Immich assets for "
+                    f"{uploader.name}: {e} — will upload instead"
+                )
+                idx = {}
+            self._asset_index[uploader.name] = idx
+            total = sum(len(v) for v in idx.values())
+            self._log(
+                f"   {total} existing asset(s) across "
+                f"{len(idx)} filename(s)"
+            )
+            return idx
+
+    def _lookup_by_filename(
+        self, uploader: UserSession, filename: str
+    ) -> List[Tuple[str, Optional[str], Optional[str], Optional[str]]]:
+        """Targeted exact-name lookup, used when the bulk index misses.
+
+        Result (including the empty list) is cached per (uploader, filename)
+        so a name is queried against Immich at most once per run.
+        """
+        if not filename:
+            return []
+        key = (uploader.name, filename.lower())
+        with self._fallback_lock:
+            cached = self._fallback_cache.get(key)
+        if cached is not None:
+            return cached
+        try:
+            candidates = uploader.immich.find_assets_by_filename(
+                filename
+            )
+        except Exception as e:
+            log.exception(
+                "Fallback lookup failed for %r", filename
+            )
+            self._log(
+                f"⚠ Fallback lookup failed for {filename}: {e}"
+            )
+            candidates = []
+        with self._fallback_lock:
+            self._fallback_cache[key] = candidates
+        return candidates
 
     def _process_one_asset(
         self,
@@ -300,25 +585,85 @@ class Migrator:
                 f"⏭ Video skipped (include_videos=false): "
                 f"{item.get('filename')}"
             )
+            self.stats.bump("skipped")
+            return None, uploader.name
+
+        if not self._in_date_range(item):
+            self.stats.bump("skipped")
             return None, uploader.name
 
         # Dry-run: just log what would be done
         if self.dry_run:
+            verb = (
+                "link-or-upload"
+                if self.external_library_mode
+                else "download+upload"
+            )
             self._log(
-                f"  [DRY] Would download+upload "
+                f"  [DRY] Would {verb} "
                 f"{item.get('filename')} (owner={uploader.name})"
             )
-            self.stats.uploaded += 1
+            self.stats.bump("uploaded")
             return f"dry-run-{syno_id}", uploader.name
+
+        # External-library mode: if the photo already exists in Immich (it's
+        # served from an external library), link that asset to the album
+        # instead of downloading and re-uploading a duplicate copy.
+        if self.external_library_mode:
+            index = self._get_asset_index(uploader)
+            filename = item.get("filename", "")
+            capture = self._item_timestamp(item)
+            existing_id = match_existing_asset(
+                index, filename, capture, owner_name=uploader.name
+            )
+            if existing_id is None:
+                # Bulk index miss isn't proof the asset is absent — the
+                # full-library scan can drop rows at page boundaries. Confirm
+                # with a targeted exact-name query before deciding to upload a
+                # duplicate.
+                candidates = self._lookup_by_filename(
+                    uploader, filename
+                )
+                if candidates:
+                    existing_id = match_existing_asset(
+                        {filename.lower(): candidates},
+                        filename,
+                        capture,
+                        owner_name=uploader.name,
+                    )
+            if existing_id:
+                self.checkpoint.mark_linked(
+                    uploader.name, syno_id, existing_id
+                )
+                self.stats.bump("linked")
+                self._log(f"🔗 Linked (external): {filename}")
+                return existing_id, uploader.name
+            # No match → fall through to a normal upload so the photo is
+            # never silently missing from the migrated album.
+            self._log(
+                f"↑ No external match for {filename} — "
+                f"uploading"
+            )
 
         # Download
         if not self.control.check():
             return None, uploader.name
 
-        filepath = uploader.syno.download(item, folder)
+        motion_path: Optional[Path] = None
+        if item.get("type") == "live":
+            filepath, motion_path = uploader.syno.download_live_photo(
+                item, folder
+            )
+        else:
+            filepath = uploader.syno.download(item, folder)
         if not filepath:
             self.checkpoint.mark_failed(
-                uploader.name, syno_id
+                uploader.name, syno_id, error="download_failed"
+            )
+            self.stats.bump("failed")
+            self._log(
+                f"✖ download failed: {item.get('filename')} "
+                f"(syno_id={syno_id})"
             )
             return None, uploader.name
 
@@ -340,22 +685,45 @@ class Migrator:
         if not self.control.check():
             return None, uploader.name
 
+        created_at = self._item_timestamp(item)
+
+        live_photo_video_id = None
+        if motion_path:
+            motion_name = f"{Path(item['filename']).stem}.MOV"
+            live_photo_video_id, _, motion_err = (
+                uploader.immich.upload_asset(
+                    motion_path,
+                    device_id=f"synology-{uploader.name}",
+                    device_asset_id=device_asset_id(
+                        uploader.name, f"{syno_id}_motion"
+                    ),
+                    file_created_at=created_at,
+                    original_filename=motion_name,
+                    visibility="hidden",
+                )
+            )
+            if not live_photo_video_id:
+                self._log(
+                    f"⚠ {item.get('filename')}: motion upload failed "
+                    f"({motion_err}) — still image only"
+                )
+
         asset_id, was_dup, err = uploader.immich.upload_asset(
             filepath,
             device_id=f"synology-{uploader.name}",
-            device_asset_id=(
-                f"{uploader.name}_{item['filename']}_"
-                f"{filepath.stat().st_size}"
-            ),
-            file_created_at=item.get("time"),
+            device_asset_id=device_asset_id(uploader.name, syno_id),
+            file_created_at=created_at,
             original_filename=item["filename"],
+            live_photo_video_id=live_photo_video_id,
         )
 
         if self.delete_after and asset_id:
-            try:
-                filepath.unlink()
-            except Exception:
-                pass
+            for local_path in (filepath, motion_path):
+                if local_path:
+                    try:
+                        local_path.unlink()
+                    except Exception:
+                        pass
 
         if asset_id:
             self.checkpoint.mark_uploaded(
@@ -363,14 +731,14 @@ class Migrator:
                 was_duplicate=was_dup,
             )
             if was_dup:
-                self.stats.duplicate += 1
+                self.stats.bump("duplicate")
             else:
-                self.stats.uploaded += 1
+                self.stats.bump("uploaded")
         else:
             self.checkpoint.mark_failed(
-                uploader.name, syno_id
+                uploader.name, syno_id, error=err or "upload_failed"
             )
-            self.stats.failed += 1
+            self.stats.bump("failed")
             if err:
                 self._log(
                     f"✖ {item.get('filename')}: {err}"
@@ -387,23 +755,6 @@ class Migrator:
             return
 
         name = album["name"]
-        passphrase = (
-            album.get("passphrase")
-            or f"local-{album['id']}"
-        )
-
-        # Filters
-        if not self._filter_album(name):
-            self._log(f"⏭ Filtered: {name}")
-            return
-
-        # Already done?
-        if self.checkpoint.is_album_done(passphrase):
-            self._log(f"⏭ Already done: {name}")
-            self.stats.albums_done += 1
-            return
-
-        # Determine real owner
         sharing = (
             album.get("additional", {}).get(
                 "sharing_info", {}
@@ -419,6 +770,34 @@ class Migrator:
             if _shared_oid is not None and _shared_oid > 0
             else album.get("owner_user_id")
         )
+        if owner_syno_id == 0:
+            owner_guess = self.shared_owner
+        else:
+            owner_guess = self.syno_id_to_session.get(owner_syno_id)
+        owner_name = owner_guess.name if owner_guess else ""
+        passphrase = album_key(owner_name, album) if owner_name else (
+            album.get("passphrase") or f"local-{album['id']}"
+        )
+        legacy_key = album.get("passphrase") or f"local-{album['id']}"
+
+        # Filters
+        if not self._filter_album(name):
+            self._log(f"⏭ Filtered: {name}")
+            return
+
+        # Already done? Accept the legacy local-<id> key so resumed runs
+        # after this fix don't re-migrate albums marked done by older builds.
+        if (
+            self.checkpoint.is_album_done(passphrase)
+            or (
+                legacy_key != passphrase
+                and self.checkpoint.is_album_done(legacy_key)
+            )
+        ):
+            self._log(f"⏭ Already done: {name}")
+            self.stats.albums_done += 1
+            return
+
         is_shared = bool(album.get("shared")) or bool(
             sharing.get("permission")
         )
@@ -862,7 +1241,7 @@ class Migrator:
                     self._log(
                         f"✖ {item.get('filename')}: {e}"
                     )
-                    self.stats.failed += 1
+                    self.stats.bump("failed")
                 if asset_id:
                     uploaded_by_uploader.setdefault(
                         name, []
@@ -1016,6 +1395,66 @@ class Migrator:
             )
             self.checkpoint.save()
 
+    def run_shared_space(self) -> None:
+        """Migrate Synology Shared Space (FotoTeam) items.
+
+        `include_shared_space` was stored by the wizard but never used:
+        items only live in the team library (not in a personal album or
+        timeline) were skipped. Photos already uploaded via an album are
+        skipped by the checkpoint.
+        """
+        if not self.include_shared_space:
+            return
+        owner = self.shared_owner
+        if not owner:
+            self._log("⚠ Shared Space: no owner session configured, skipping")
+            return
+        if self.checkpoint.is_shared_space_done():
+            self._log("⏭ Shared Space already done")
+            return
+
+        self.stats.current_step = "shared_space"
+        self.stats.current_album = "Shared Space"
+        self._log(f"🖼 Shared Space (owner: {owner.name})...")
+
+        try:
+            items = owner.syno.list_shared_space_items()
+        except Exception as e:
+            self._log(f"✖ Shared Space list: {e}")
+            return
+
+        self._log(f"   📸 {len(items)} items")
+        if self.dry_run:
+            self.stats.items_total = len(items)
+            self.stats.items_done = len(items)
+            self.stats.bump("uploaded", len(items))
+            self.checkpoint.mark_shared_space_done()
+            self.checkpoint.save()
+            return
+
+        folder = (
+            self.work_dir / owner.output_dir_name / "_shared_space"
+        )
+        uploaded_by_uploader: Dict[str, List[str]] = {}
+        self.stats.items_total = len(items)
+        self.stats.items_done = 0
+
+        if self.workers <= 1:
+            self._process_items_sequential(
+                items, folder, uploaded_by_uploader
+            )
+        else:
+            self._process_items_parallel(
+                items, folder, uploaded_by_uploader
+            )
+
+        if not self.control.check():
+            self.checkpoint.save()
+            return
+
+        self.checkpoint.mark_shared_space_done()
+        self.checkpoint.save()
+
     def _start_keepalives(self):
         """Keep each user's Synology session alive for the whole migration.
 
@@ -1061,6 +1500,12 @@ class Migrator:
         try:
             if mig.get("include_albums", True):
                 self.run_albums()
+
+            if (
+                self.include_shared_space
+                and self.control.check()
+            ):
+                self.run_shared_space()
 
             if (
                 mig.get("include_timeline", True)

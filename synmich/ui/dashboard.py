@@ -73,6 +73,11 @@ class StatsPanel(Static):
             "☁  Uploaded:",
             f"[green]{self.stats.uploaded}[/]",
         )
+        if getattr(self.stats, "linked", 0):
+            t.add_row(
+                "🔗 Linked:",
+                f"[green]{self.stats.linked}[/]",
+            )
         t.add_row(
             "♻  Duplicate:",
             f"[yellow]{self.stats.duplicate}[/]",
@@ -294,9 +299,13 @@ class MigrationApp(App):
             self.stats.log_message(
                 "[bold green]══════════════════════════════════════[/]"
             )
+            linked_txt = (
+                f"[green]{s.linked} linked[/], " if s.linked else ""
+            )
             self.stats.log_message(
                 f"[bold green]✅ MIGRATION COMPLETE[/] — "
                 f"[green]{s.uploaded} uploaded[/], "
+                f"{linked_txt}"
                 f"{s.duplicate} duplicate(s), {failed_txt}, "
                 f"{s.albums_done} album(s). "
                 f"Press [bold]q[/] to quit."

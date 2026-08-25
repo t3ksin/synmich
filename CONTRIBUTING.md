@@ -5,7 +5,7 @@ Thanks for your interest! Contributions of any size are welcome.
 ## Setup
 
 ```bash
-git clone https://github.com/schnyder/synmich.git
+git clone https://github.com/t3ksin/synmich.git
 cd synmich
 python -m venv .venv
 source .venv/bin/activate

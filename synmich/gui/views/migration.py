@@ -10,6 +10,7 @@ at migration time.
 
 from __future__ import annotations
 
+import logging
 import re
 import threading
 import time
@@ -17,11 +18,13 @@ import tkinter as tk
 
 import customtkinter as ctk
 
-from synmich.config import get_checkpoint_file, save_config
+from synmich.config import save_config
 from synmich.core.checkpoint import Checkpoint
 from synmich.core.migrator import Migrator, MigrationControl, MigrationStats
 from synmich.gui import widgets as W
 from synmich.ui.album_selector import _build_records
+
+log = logging.getLogger("synmich")
 
 
 def _plain(s):
@@ -129,6 +132,19 @@ class MigrationView(ctk.CTkFrame):
             hover_color=W.GREEN_DK, checkbox_width=20, checkbox_height=20,
             corner_radius=0, border_width=2, font=W.font(12)).pack(
             anchor="w", pady=(12, 0))
+        # External-library mode: link existing assets instead of re-uploading
+        # duplicates when the photos already live in Immich via an external
+        # library (see immich-app/immich#7804).
+        self.var_external = ctk.BooleanVar(
+            value=bool(mig.get("external_library_mode", False)))
+        ctk.CTkCheckBox(
+            c.body,
+            text="Photos already in Immich via an external library "
+                 "(link instead of re-uploading)",
+            variable=self.var_external, fg_color=W.GREEN,
+            hover_color=W.GREEN_DK, checkbox_width=20, checkbox_height=20,
+            corner_radius=0, border_width=2, font=W.font(12)).pack(
+            anchor="w", pady=(6, 0))
 
         self.albums_card = W.card(self, "Albums (tick the ones to migrate)")
         top = ctk.CTkFrame(self.albums_card.body, fg_color="transparent")
@@ -211,8 +227,8 @@ class MigrationView(ctk.CTkFrame):
         try:
             records = _build_records(self.app.users_syno_sessions)
         except Exception as e:  # noqa: BLE001
-            self.after(0, lambda: (self._busy(False),
-                                   self._set_log(f"Load albums failed: {e}")))
+            msg = f"Load albums failed: {e}"
+            self.after(0, lambda: (self._busy(False), self._set_log(msg)))
             return
         self.after(0, lambda: self._populate(records))
 
@@ -253,6 +269,7 @@ class MigrationView(ctk.CTkFrame):
         mig["shared_albums_mode"] = W.SHARED_TO_INTERNAL.get(
             self.toggle_shared.get(), "link")
         mig["include_timeline"] = bool(self.var_timeline.get())
+        mig["external_library_mode"] = bool(self.var_external.get())
         if mig["albums_mode"] == "select":
             mig["selected_albums"] = [
                 k for k, v in self.album_vars.items() if v.get()]
@@ -280,7 +297,7 @@ class MigrationView(ctk.CTkFrame):
         save_config(self.cfg)
         migrator = Migrator(
             config=self.cfg, sessions=self.app.sessions,
-            checkpoint=Checkpoint(get_checkpoint_file()),
+            checkpoint=Checkpoint(config=self.cfg),
             stats=self.stats, control=self.control)
         self.start_btn.configure(state="disabled")
         self.pause_btn.configure(state="normal")
@@ -293,6 +310,7 @@ class MigrationView(ctk.CTkFrame):
         try:
             migrator.run()
         except Exception as e:  # noqa: BLE001
+            log.exception("Migration crashed in GUI")
             self.stats.log_message(f"Migration crashed: {e}")
         finally:
             self.stats.current_step = "done"
@@ -327,14 +345,20 @@ class MigrationView(ctk.CTkFrame):
             self.pause_btn.configure(state="disabled")
             self.stop_btn.configure(state="disabled")
             self.start_btn.configure(state="normal")
-            self.app.last_run = {"label": "Synology to Immich", "rows": [
-                ("Uploaded", str(s.uploaded), W.GREEN),
+            rows = [("Uploaded", str(s.uploaded), W.GREEN)]
+            if s.linked:
+                rows.append(
+                    ("Linked (external)", str(s.linked), W.GREEN))
+            rows += [
                 ("Duplicate", str(s.duplicate), W.BLUE),
                 ("Failed", str(s.failed), W.RED),
                 ("Albums", str(s.albums_done), W.TEXT),
-                ("Total time", W.fmt_duration(el), W.MUTED)]}
+                ("Total time", W.fmt_duration(el), W.MUTED)]
+            self.app.last_run = {"label": "Synology to Immich", "rows": rows}
+            linked_txt = f"{s.linked} linked, " if s.linked else ""
             self._set_log(
                 f"\nMigration complete - {s.uploaded} uploaded, "
+                f"{linked_txt}"
                 f"{s.duplicate} duplicate, {s.failed} failed, "
                 f"{s.albums_done} album(s) in {W.fmt_duration(el)}.")
         else:

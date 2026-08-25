@@ -1,5 +1,119 @@
 # Changelog
 
+## [Unreleased]
+
+## [2.3.1] - 2026-08-25
+
+### Fixed
+
+- **Live Photos on Photos 1.9+.** When `thumbnail.unit_id` equals the item
+  id, a `unit_id` download is only the HEIC. synmich now also downloads by
+  `item_id`, which returns a zip of the HEIC plus the motion MOV, and links
+  both in Immich. The older two-unit layout is unchanged.
+- **Immich duplicate album names.** Current Immich accepts two albums with
+  the same name (HTTP 201) instead of HTTP 400. `create_album` now looks up
+  an existing album first (preferring the one with more assets) so a second
+  empty album is not created.
+
+## [2.3.0] - 2026-08-25
+
+### Added
+
+- **Live Photos.** iPhone Live Photos (`type == live`) are now downloaded as
+  the still HEIC plus the motion MOV, then linked in Immich via
+  `livePhotoVideoId`. Previously the motion clip was uploaded as a broken
+  `.HEIC`. Local backup writes both files too. Duplicate-linked JPEGs that
+  share storage with another item are left on the existing download path so
+  they do not get mistaken for Live Photos.
+- **Shared Space is actually migrated.** When `include_shared_space` is set,
+  Shared Space items are downloaded and uploaded. The wizard flag was stored
+  and previously ignored.
+- **Date filters.** `filters.min_date` / `filters.max_date` (`YYYY-MM-DD`) are
+  applied during migration.
+- **pytest in CI.** Unit tests run on every push / pull request.
+
+### Changed
+
+- **Immich `deviceAssetId` is unique per Synology item.** The upload key is
+  now `{user}_synoid{synology_item_id}` instead of filename + size, so two
+  different photos with the same name and byte size no longer collide in
+  Immich and land in the wrong album.
+- **Checkpoint path is always the hashed per-config file.** CLI, GUI, doctor
+  and `synmich checkpoints` all use `Checkpoint(config=…)`. A leftover
+  `~/.config/synmich/checkpoint.json` is still migrated on first run.
+
+### Fixed
+
+- **Empty albums / 0 photos on Synology Photos 1.9 (issues #4, #7).** Synology
+  Photos APIs always answer HTTP 200 and signal failure with `success: false`.
+  Listing ignored that flag and requested `SYNO.Foto.Browse.Item` at version
+  7, which most DSM 7.x / Photos 1.9 boxes cap at 6 — so list/count came back
+  empty. synmich now queries `SYNO.API.Info` for the highest supported version
+  and raises on API errors instead of treating them as an empty library.
+- **Missing photos were not counted as failed (issue #6).** A download that
+  returned `None` was written to the checkpoint with an empty error but never
+  incremented the Failed counter or logged a line.
+- **Duplicate-linked downloads failed with Synology error 117 (issue #6).**
+  Items that share storage with another indexed photo must be downloaded with
+  `additional.thumbnail.unit_id` / `cache_key`, not the item's own id.
+- **Creating an album crashed on a duplicate Immich name (issue #4).** Immich
+  rejects a second album of the same name with HTTP 400 (sometimes as a list
+  body). synmich now reuses the existing album instead of raising
+  `list indices must be integers or slices, not str`.
+- **`synmich stats` crashed.** The CLI redefined `cmd_stats` and called the
+  non-existent `Checkpoint.stats()`. It now uses the detailed Immich +
+  checkpoint stats command (`--json` supported).
+- **Keepalive re-login dropped cookies.** Re-login now replaces the
+  `requests.Session` as well as the SID, so a session that expired mid-run
+  can continue.
+- **`load_config` ignored new default keys.** Older YAML files now pick up
+  keys added in later versions instead of raising `KeyError`.
+- **Capture timestamps in milliseconds.** Synology sometimes reports `time`
+  in ms. That value is now converted before matching an external-library
+  asset and before sending `fileCreatedAt` to Immich.
+
+## [2.2.0] - 2026-06-15
+
+### Added
+
+- **External library mode** (`migration.external_library_mode`). For setups
+  where the photos already live in Immich via an *external library*, synmich
+  now matches each Synology photo to the existing Immich asset by filename +
+  capture date and adds it straight to the album — no download, no re-upload —
+  instead of creating a duplicate copy in the upload library. Unmatched photos
+  still upload normally so nothing is dropped, and matched photos are counted
+  under a new **Linked (external)** stat in the summaries and checkpoint.
+  Resolves the duplication reported with external libraries (#1, #2): Immich
+  can't dedup external assets because it stores a dummy path-based checksum for
+  them ([immich-app/immich#7804](https://github.com/immich-app/immich/discussions/7804)),
+  so a content-checksum skip could never catch them.
+
+### Fixed
+
+- **External library mode: photos already in Immich were still re-uploaded.**
+  On large libraries the bulk asset index built from `POST /search/metadata`
+  could silently drop assets at page boundaries (offset pagination over a
+  non-unique sort key), so a photo that really lived in an external library got
+  no match and was re-uploaded as a duplicate. When the bulk index misses a
+  name, synmich now does a targeted exact-name lookup before deciding to upload
+  (#1).
+- **Link to the external asset, not a leftover upload copy.** When a filename
+  resolves to both an external-library asset and an upload-library copy (e.g.
+  left over from an earlier run), matching now prefers the external one via
+  `libraryId` instead of picking arbitrarily by capture date (#1).
+- **External-library tie-breaks now handle duplicate external paths better.**
+  When the same filename and capture date exist in multiple external
+  libraries, synmich now uses the Immich `originalPath` to prefer the asset
+  under the current Synology user's home folder before falling back to the
+  previous date-based choice (#1).
+- **The GUI now writes `~/.config/synmich/migration.log`.** CLI runs already
+  configured that file, but GUI-only runs did not install the file logger, so
+  fallback tracebacks were missing when testing from the desktop app (#1).
+- **`Linked (external)` was missing from the GUI/CLI run summaries.** The count
+  is now shown in both, and each linked photo is logged as it happens, so
+  external-library runs report what was linked instead of only what was
+  uploaded.
+
 ## [2.1.0] - 2026-05-21
 
 ### Added

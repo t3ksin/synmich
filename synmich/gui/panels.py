@@ -117,7 +117,6 @@ def _section(parent, text):
 def show_stats(app):
     """Two views: the last run of this session, and the saved cumulative
     progress (the checkpoint, kept across runs so migrations can resume)."""
-    from synmich.config import get_checkpoint_file
     from synmich.core.checkpoint import Checkpoint
 
     dlg = _modal(app, "Stats", h=560)
@@ -136,7 +135,7 @@ def show_stats(app):
 
     _section(dlg, "Saved progress (all runs)")
     try:
-        s = Checkpoint(get_checkpoint_file()).get_summary()
+        s = Checkpoint(config=app.cfg).get_summary()
     except Exception:  # noqa: BLE001
         s = {}
     _row(dlg, "Photos uploaded", str(s.get("uploaded", 0)), W.GREEN)
@@ -153,7 +152,7 @@ def show_stats(app):
 def show_reset(app):
     """Scoped reset. Never touches any photo - only synmich's own local files:
     the saved progress, the 2FA device tokens, and/or the configuration."""
-    from synmich.config import get_checkpoint_file, save_config
+    from synmich.config import save_config
     from synmich.core.checkpoint import Checkpoint
     from synmich.core.device_tokens import _tokens_path
 
@@ -177,7 +176,7 @@ def show_reset(app):
                          hover=hover).pack(fill="x")
 
     def _reset_progress():
-        Checkpoint(get_checkpoint_file()).reset()
+        Checkpoint(config=app.cfg).reset()
         app.last_run = None
 
     def _reset_tokens():

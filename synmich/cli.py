@@ -1,7 +1,6 @@
 """synmich CLI — main entry point."""
 
 import argparse
-import logging
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -44,26 +43,7 @@ from synmich.ui.wizard import run_wizard
 from synmich.commands.doctor import cmd_doctor
 from synmich.commands.stats import cmd_stats
 from synmich.commands.checkpoints import add_subcommands as add_checkpoints_subcommands
-
-
-def setup_logging(verbose: bool = False) -> None:
-    log_file = get_log_file()
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-
-    fh = logging.FileHandler(log_file, encoding="utf-8")
-    fh.setLevel(logging.DEBUG)
-    fh.setFormatter(
-        logging.Formatter(
-            "%(asctime)s [%(levelname)s] %(message)s"
-        )
-    )
-
-    logger = logging.getLogger("synmich")
-    logger.setLevel(
-        logging.DEBUG if verbose else logging.INFO
-    )
-    logger.handlers.clear()
-    logger.addHandler(fh)
+from synmich.logging_setup import setup_logging
 
 
 def _default_migrate_args() -> argparse.Namespace:
@@ -115,7 +95,12 @@ def cmd_config(args) -> int:
     print_banner()
     path = get_config_file()
     muted(f"  Config file: {path}")
-    muted(f"  Checkpoint:  {get_checkpoint_file()}")
+    if path.exists():
+        from synmich.core.checkpoint import get_checkpoint_path_for_config
+        cfg = load_config()
+        muted(f"  Checkpoint:  {get_checkpoint_path_for_config(cfg)}")
+    else:
+        muted(f"  Checkpoint:  {get_checkpoint_file()}")
     muted(f"  Log:         {get_log_file()}")
     console.print()
     if not path.exists():
@@ -227,6 +212,11 @@ def cmd_migrate(args) -> int:
         muted("\n  Run: [bold]synmich init[/] first")
         return 1
 
+    if not getattr(args, "yes", False) and sys.stdin.isatty():
+        from synmich.core.migrator_helpers import check_and_warn_config_mismatch
+        if not check_and_warn_config_mismatch(config):
+            return 0
+
     # CLI overrides
     if args.albums_only:
         config["migration"]["include_timeline"] = False
@@ -238,7 +228,7 @@ def cmd_migrate(args) -> int:
         config["execution"]["workers"] = args.workers
 
     if args.reset:
-        cp = Checkpoint(get_checkpoint_file())
+        cp = Checkpoint(config=config)
         cp.reset()
         success("Checkpoint reset")
 
@@ -293,7 +283,7 @@ def cmd_migrate(args) -> int:
 
     stats = MigrationStats()
     control = MigrationControl()
-    checkpoint = Checkpoint(get_checkpoint_file())
+    checkpoint = Checkpoint(config=config)
 
     setup_logging(
         verbose=config.get("execution", {}).get(
@@ -339,7 +329,12 @@ def cmd_migrate(args) -> int:
             body = (
                 f"[bold]Albums migrated :[/] {s.albums_done}\n"
                 f"[bold]Photos uploaded :[/] [green]{s.uploaded}[/]\n"
-                f"[bold]Duplicates      :[/] {s.duplicate}\n"
+                + (
+                    f"[bold]Linked existing :[/] [cyan]{s.linked}[/]\n"
+                    if s.linked
+                    else ""
+                )
+                + f"[bold]Duplicates      :[/] {s.duplicate}\n"
                 f"[bold]Failed          :[/] "
                 + (f"[red]{s.failed}[/]" if s.failed else "0")
             )
@@ -572,7 +567,7 @@ def cmd_logs(args) -> int:
     if not log_file.exists():
         warn("No log file yet.")
         return 1
-    with open(log_file) as f:
+    with open(log_file, encoding="utf-8") as f:
         lines = f.readlines()
     tail = lines[-args.lines :]
     for ln in tail:
@@ -580,51 +575,13 @@ def cmd_logs(args) -> int:
     return 0
 
 
-def cmd_stats(args) -> int:
-    """synmich stats — Stats du checkpoint."""
-    print_banner()
-    cp = Checkpoint(get_checkpoint_file())
-    s = cp.stats()
-
-    table = Table(
-        title="Checkpoint stats",
-        title_style=f"bold {COLOR_PRIMARY}",
-    )
-    table.add_column("Metric", style="bold")
-    table.add_column("Value", justify="right")
-    table.add_row(
-        "Uploaded (new)",
-        f"[green]{s['uploaded']}[/]",
-    )
-    table.add_row(
-        "Duplicate (skipped)",
-        f"[yellow]{s['duplicate']}[/]",
-    )
-    table.add_row(
-        "Failed",
-        f"[red]{s['failed']}[/]",
-    )
-    table.add_row(
-        "Total assets in Immich",
-        str(s["total_in_immich"]),
-    )
-    table.add_row(
-        "Albums marked done",
-        str(s["albums_done"]),
-    )
-    table.add_row(
-        "Users with uploads",
-        str(s["users_with_uploads"]),
-    )
-
-    console.print(table)
-    return 0
-
-
 def cmd_reset(args) -> int:
     """synmich reset — Reset checkpoint."""
-    cp = Checkpoint(get_checkpoint_file())
-    cp.reset()
+    config = load_config()
+    if config:
+        Checkpoint(config=config).reset()
+    else:
+        Checkpoint(path=get_checkpoint_file()).reset()
     success("Checkpoint reset")
     return 0
 
@@ -750,8 +707,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # stats
     p_st = sub.add_parser(
-        "stats", help="Show checkpoint stats"
+        "stats", help="Show Immich + checkpoint stats"
     )
+    p_st.add_argument("--json", action="store_true", help="JSON output")
     p_st.set_defaults(func=cmd_stats)
 
     # reset

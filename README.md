@@ -4,7 +4,7 @@
 
 ### Migrate Synology Photos to Immich — or a local backup — properly: albums, sharing and all.
 
-![version](https://img.shields.io/badge/version-2.1.0-1D9E75)
+![version](https://img.shields.io/badge/version-2.3.1-1D9E75)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![python](https://img.shields.io/badge/python-3.9%2B-3776AB)
 ![platform](https://img.shields.io/badge/GUI%20%2B%20CLI-1e2a36)
@@ -116,6 +116,7 @@ synmich gui                                          # 👉 launch the app
 - 🤝 **Shared albums, your way** — keep Synology's exact sharing (`mirror-syno`), give each user their own copy (`separate`), or skip sharing (`skip`). Owners and members are preserved either way.
 - 🗂️ **Albums + timeline** — bring over the full library, just the albums, or hand-pick specific albums per user.
 - 💾 **Local backup** — download a user's Synology albums straight to a folder (Synology → local), no Immich needed.
+- 📱 **Live Photos** — the HEIC still and the motion MOV are migrated as a real Immich Live Photo, not a broken `.HEIC`.
 - 🔐 **2-factor authentication (2FA)** — if an account uses Synology's 2-step verification, synmich asks for the code **once**, then stores a **trusted device token** (exactly like your browser does) so future runs never prompt again. Tokens stay only on your machine and can be wiped from **Reset → 2FA devices**.
 - ♻️ **Resumable & deduplicated** — a checkpoint records every item, and photos already in Immich are matched by **SHA1** and skipped. Stop and re-run any time, no duplicates.
 - 🩺 **Doctor** — one command checks your servers, accounts, free disk space and config, with a clear ✓ / ✗ for each.
@@ -154,10 +155,19 @@ users:
 migration:
   include_albums: true
   include_timeline: true
-  shared_albums_mode: link         # link | duplicate | ignore
+  shared_albums_mode: link         # link (mirror-syno) | duplicate (separate) | ignore (skip)
+  external_library_mode: false     # see "External library mode" below
 ```
 
 > Config and checkpoint files stay on your machine and are git-ignored — no credentials ever leave your computer.
+
+### External library mode
+
+If your photos are **already in Immich through an [external library](https://immich.app/docs/features/libraries/)** (Immich reads them in place from a mounted Synology share rather than storing its own copy), set `external_library_mode: true`.
+
+Without it, synmich uploads each photo, which lands a **second copy** in Immich's upload library: Immich's built-in deduplication compares content checksums, but it gives external-library assets a *dummy* checksum (`sha1('path:' + originalPath)`, [immich-app/immich#7804](https://github.com/immich-app/immich/discussions/7804)) instead of hashing the file — so the duplicate is invisible to that check and slips through.
+
+With the mode on, synmich builds an index of the assets already in Immich and, for each Synology photo, **matches it to the existing asset by filename + capture date** (`exifInfo.dateTimeOriginal`), then just adds that asset to the album — no download, no re-upload. Only the album/metadata is migrated; your media stays external. Any photo it can't confidently match is uploaded normally, so nothing is ever dropped.
 
 ---
 

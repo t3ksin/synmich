@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.3.2] - 2026-08-27
+
 ### Fixed
 
 - **Uploads larger than ~2 GB no longer OOM (issue #10).** `requests`

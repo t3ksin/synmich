@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Uploads larger than ~2 GB no longer OOM (issue #10).** `requests`
+  `files=` + `data=` built the whole multipart body in RAM before sending.
+  Immich uploads now stream from disk via `requests-toolbelt`
+  `MultipartEncoder`. `x-immich-checksum`, Live Photo fields, and retries
+  are unchanged. The upload read timeout is no longer capped at 300s.
+
 ## [2.3.1] - 2026-08-25
 
 ### Fixed

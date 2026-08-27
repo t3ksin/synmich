@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
+from requests_toolbelt import MultipartEncoder
 
 
 class ImmichError(Exception):
@@ -286,15 +287,13 @@ class ImmichClient:
         modified = iso_utc(filepath.stat().st_mtime)
 
         def _do():
+            # Rebuild the encoder on every attempt: a retry after a
+            # partial send cannot rewind a consumed file handle.
+            # MultipartEncoder streams from disk. requests `files=` +
+            # `data=` would buffer the whole multipart body in RAM and
+            # OOM on ~2GB+ videos (issue #10).
             with open(filepath, "rb") as f:
-                files = {
-                    "assetData": (
-                        upload_name,
-                        f,
-                        "application/octet-stream",
-                    )
-                }
-                form = {
+                fields = {
                     "deviceAssetId": device_asset_id,
                     "deviceId": device_id,
                     "fileCreatedAt": created,
@@ -302,19 +301,29 @@ class ImmichClient:
                     "isFavorite": (
                         "true" if is_favorite else "false"
                     ),
+                    "assetData": (
+                        upload_name,
+                        f,
+                        "application/octet-stream",
+                    ),
                 }
                 if live_photo_video_id:
-                    form["livePhotoVideoId"] = live_photo_video_id
+                    fields["livePhotoVideoId"] = live_photo_video_id
                 if visibility:
-                    form["visibility"] = visibility
+                    fields["visibility"] = visibility
+                encoder = MultipartEncoder(fields=fields)
                 return requests.post(
                     f"{self.base_url}/assets",
                     headers=self._headers(
-                        {"x-immich-checksum": checksum}
+                        {
+                            "Content-Type": encoder.content_type,
+                            "x-immich-checksum": checksum,
+                        }
                     ),
-                    files=files,
-                    data=form,
-                    timeout=300,
+                    data=encoder,
+                    # Connect 30s; no read cap — multi-GB LAN uploads
+                    # routinely exceed the old 300s timeout.
+                    timeout=(30, None),
                 )
 
         try:

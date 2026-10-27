@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Performance
+
+- Reuse TCP/TLS connections for Immich API calls and Synology downloads via
+  exclusively leased sessions; parallel workers never share a Session at the
+  same time. Close migration connections on completion/error and refresh
+  download cookies from the current authenticated session.
+- Increase download chunks from 8 KiB to 1 MiB while keeping disk streaming.
+- Log cumulative download and upload/checksum worker time and downloaded MiB
+  to help investigate slow runs; no speed multiplier is promised.
+- Reset ETA and transfer rate per album/timeline batch. Previously the entire
+  run's elapsed time was divided by the current album's reset item count,
+  which could produce wildly inflated time estimates late in a migration.
+
 ### Fixed
 
 - **Missing 2FA prompt.** Accept standard DSM code-403/406 OTP challenges

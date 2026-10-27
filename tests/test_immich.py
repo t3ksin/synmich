@@ -17,8 +17,8 @@ def test_create_album_returns_id():
     resp = MagicMock(status_code=201)
     resp.json.return_value = {"id": "alb-1"}
     resp.raise_for_status = MagicMock()
-    with patch("synmich.core.immich.requests.get", return_value=listed):
-        with patch("synmich.core.immich.requests.post", return_value=resp):
+    with patch("synmich.core.immich.requests.Session.get", return_value=listed):
+        with patch("synmich.core.immich.requests.Session.post", return_value=resp):
             assert client.create_album("Trip") == "alb-1"
 
 
@@ -30,8 +30,8 @@ def test_create_album_reuses_existing_before_post():
         {"id": "full", "albumName": "Trip", "assetCount": 5},
     ]
     listed.raise_for_status = MagicMock()
-    with patch("synmich.core.immich.requests.get", return_value=listed):
-        with patch("synmich.core.immich.requests.post") as post:
+    with patch("synmich.core.immich.requests.Session.get", return_value=listed):
+        with patch("synmich.core.immich.requests.Session.post") as post:
             assert client.create_album("Trip") == "full"
             post.assert_not_called()
 
@@ -45,9 +45,9 @@ def test_create_album_reuses_existing_on_400():
     listed = MagicMock(status_code=200)
     listed.json.return_value = [{"id": "alb-9", "albumName": "Trip"}]
     listed.raise_for_status = MagicMock()
-    with patch("synmich.core.immich.requests.post", return_value=created):
+    with patch("synmich.core.immich.requests.Session.post", return_value=created):
         with patch(
-            "synmich.core.immich.requests.get",
+            "synmich.core.immich.requests.Session.get",
             side_effect=[empty, listed],
         ):
             assert client.create_album("Trip") == "alb-9"
@@ -61,8 +61,8 @@ def test_create_album_rejects_list_payload():
     resp = MagicMock(status_code=200)
     resp.json.return_value = [{"error": "bad"}]
     resp.raise_for_status = MagicMock()
-    with patch("synmich.core.immich.requests.get", return_value=listed):
-        with patch("synmich.core.immich.requests.post", return_value=resp):
+    with patch("synmich.core.immich.requests.Session.get", return_value=listed):
+        with patch("synmich.core.immich.requests.Session.post", return_value=resp):
             with pytest.raises(ImmichError, match="Unexpected create-album"):
                 client.create_album("Album Name")
 
@@ -73,7 +73,7 @@ def test_upload_asset_sends_live_photo_fields(tmp_path):
     response = MagicMock(status_code=201)
     response.json.return_value = {"id": "still-id", "status": "created"}
 
-    with patch("synmich.core.immich.requests.post", return_value=response) as post:
+    with patch("synmich.core.immich.requests.Session.post", return_value=response) as post:
         result = ImmichClient("https://immich.example", "key").upload_asset(
             filepath,
             live_photo_video_id="motion-id",
@@ -93,7 +93,7 @@ def test_upload_asset_streams_multipart_instead_of_buffering(tmp_path):
     response = MagicMock(status_code=201)
     response.json.return_value = {"id": "vid-1", "status": "created"}
 
-    with patch("synmich.core.immich.requests.post", return_value=response) as post:
+    with patch("synmich.core.immich.requests.Session.post", return_value=response) as post:
         result = ImmichClient("https://immich.example", "key").upload_asset(
             filepath,
             device_id="synmich",
@@ -129,7 +129,7 @@ def test_upload_asset_rebuilds_encoder_on_retry(tmp_path):
     )
 
     with patch(
-        "synmich.core.immich.requests.post",
+        "synmich.core.immich.requests.Session.post",
         side_effect=[requests.exceptions.ConnectionError("boom"), ok],
     ) as post:
         result = client.upload_asset(filepath)
@@ -147,8 +147,8 @@ def test_motion_duplicate_type_is_checked_before_linking(tmp_path, asset_type):
     response.json.return_value = {"id": "old-asset", "status": "duplicate"}
     detail = MagicMock(status_code=200)
     detail.json.return_value = {"id": "old-asset", "type": asset_type}
-    with patch("synmich.core.immich.requests.post", return_value=response):
-        with patch("synmich.core.immich.requests.get", return_value=detail) as get:
+    with patch("synmich.core.immich.requests.Session.post", return_value=response):
+        with patch("synmich.core.immich.requests.Session.get", return_value=detail) as get:
             result = ImmichClient("https://immich.example", "key").upload_asset(
                 filepath, expected_type="VIDEO"
             )
@@ -170,8 +170,8 @@ def test_existing_live_still_gets_explicit_motion_link(tmp_path, link_fails):
     linked = MagicMock(status_code=200)
     if link_fails:
         linked.raise_for_status.side_effect = requests.exceptions.HTTPError("403 Forbidden")
-    with patch("synmich.core.immich.requests.post", return_value=response):
-        with patch("synmich.core.immich.requests.put", return_value=linked) as put:
+    with patch("synmich.core.immich.requests.Session.post", return_value=response):
+        with patch("synmich.core.immich.requests.Session.put", return_value=linked) as put:
             result = ImmichClient("https://immich.example", "key", max_retries=1).upload_asset(
                 filepath, live_photo_video_id="motion"
             )

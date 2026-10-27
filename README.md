@@ -231,6 +231,38 @@ synmich migrate --dry-run       # simulate: nothing downloaded or uploaded
 
 ---
 
+## Slow migrations and time estimates
+
+The migration runs through the computer running synmich: **NAS → that computer
+→ Immich**. A VPN, Wi-Fi, remote relay/reverse proxy, slow temporary disk, or a
+busy NAS/Immich server can each limit the speed. A reported ETA alone does not
+identify the cause. The current-album ETA now resets for each album instead of
+including time spent in previous albums; total elapsed time still covers the run.
+
+- Use local server addresses and wired networking when available. Prefer HTTPS
+  with a valid certificate; changing to an IP must not bypass certificate checks.
+- Start with `synmich migrate --workers 2`, compare a representative album at
+  `--workers 4`, and keep the faster setting. More workers can overload a NAS
+  already creating thumbnails, transcoding video or running machine learning.
+- The final `Transfer totals` log separates Synology download time from Immich
+  upload/checksum time and reports downloaded MiB. These are cumulative worker
+  times, including retries; parallel times overlap and are not wall-clock time
+  or a measurement of pure network throughput.
+- Connections are reused between transfers, with an exclusive HTTP session per
+  active request, and downloads use larger streaming chunks. This reduces
+  repeated connection setup and small writes without buffering entire videos.
+
+If you want to keep media on the Synology, finish Immich's external-library scan
+first, confirm the assets appear in the correct Immich account, then enable
+`migration.external_library_mode: true` in synmich. This links albums without
+transferring matched media. Immich scans subfolders recursively: a scan that
+immediately finds nothing warrants checking the package/service user's read
+permissions and the import path, rather than starting a full upload. A native
+Synology package uses its filesystem paths; Docker uses the paths mounted inside
+the container. See [Immich's external-library documentation](https://docs.immich.app/features/libraries/).
+
+---
+
 ## 🧭 Architecture
 
 ```mermaid

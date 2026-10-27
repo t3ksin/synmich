@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
+from synmich.core.http_pool import SessionPool
 from synmich.core.synology_auth import (
     login_with_2fa,
     cli_otp_prompt,
@@ -23,6 +24,8 @@ import urllib3
 urllib3.disable_warnings()
 
 log = logging.getLogger("synmich")
+
+_DOWNLOAD_CHUNK_SIZE = 1024 * 1024
 
 
 class SynologyError(Exception):
@@ -220,6 +223,10 @@ class SynologyClient:
         self._lock = threading.Lock()
         # Max supported API versions, queried once per API via SYNO.API.Info.
         self._api_versions: Dict[str, int] = {}
+        self._download_pool = SessionPool()
+
+    def close_downloads(self) -> None:
+        self._download_pool.close()
 
     def _retry(self, fn, *args, **kwargs):
         last = None
@@ -302,8 +309,11 @@ class SynologyClient:
                 )
             except Exception:
                 pass
+        if self.session is not None:
+            self.session.close()
         self.session = None
         self.sid = None
+        self.close_downloads()
 
     def _api_get(
         self,
@@ -554,9 +564,9 @@ class SynologyClient:
     ) -> Optional[Path]:
         """Download an item. Returns local path or None.
 
-        Uses a fresh requests session per call (seeded with the login
-        cookies) so concurrent streamed downloads cannot corrupt each
-        other, while still sending the authenticated SID + cookies.
+        Leases a reusable session exclusively for the full streamed response,
+        seeded with current login cookies. Parallel downloads never share a
+        Session concurrently, while TCP/TLS connections remain reusable.
 
         Shared Space items (owner_user_id=0) go through
         SYNO.FotoTeam.Download. Duplicate-linked items use
@@ -611,7 +621,8 @@ class SynologyClient:
 
         last_error = None
         for attempt in range(1, self.max_retries + 1):
-            sess = requests.Session()
+            sess = self._download_pool.acquire()
+            sess.cookies.clear()
             if cookie_dict:
                 sess.cookies.update(cookie_dict)
             try:
@@ -627,7 +638,7 @@ class SynologyClient:
                 ConnectionError,
             ) as e:
                 last_error = f"network: {e}"
-                sess.close()
+                self._download_pool.release(sess)
                 if attempt < self.max_retries:
                     time.sleep(self.retry_backoff_s * attempt)
                     continue
@@ -640,7 +651,7 @@ class SynologyClient:
             if r.status_code != 200:
                 last_error = f"http_{r.status_code}"
                 r.close()
-                sess.close()
+                self._download_pool.release(sess)
                 if attempt < self.max_retries:
                     time.sleep(self.retry_backoff_s * attempt)
                     continue
@@ -665,7 +676,7 @@ class SynologyClient:
                 except Exception:  # noqa: BLE001
                     last_error = f"non-binary {ctype}: {body[:200]}"
                 r.close()
-                sess.close()
+                self._download_pool.release(sess)
                 if error_code == 117 and not _by_item_id and not explicit_unit:
                     # Some DSM versions reject valid video unit_ids. Try the
                     # logical item endpoint once, keeping the response streamed.
@@ -684,12 +695,12 @@ class SynologyClient:
 
             try:
                 with open(filepath, "wb") as f:
-                    for chunk in r.iter_content(8192):
+                    for chunk in r.iter_content(_DOWNLOAD_CHUNK_SIZE):
                         if chunk:
                             f.write(chunk)
             finally:
                 r.close()
-                sess.close()
+                self._download_pool.release(sess)
 
             if filepath.stat().st_size == 0:
                 try:
@@ -797,7 +808,8 @@ class SynologyClient:
         }
         last_error = None
         for attempt in range(1, self.max_retries + 1):
-            sess = requests.Session()
+            sess = self._download_pool.acquire()
+            sess.cookies.clear()
             if cookie_dict:
                 sess.cookies.update(cookie_dict)
             if self.session is not None:
@@ -817,7 +829,7 @@ class SynologyClient:
                 ConnectionError,
             ) as e:
                 last_error = f"network: {e}"
-                sess.close()
+                self._download_pool.release(sess)
                 if attempt < self.max_retries:
                     time.sleep(self.retry_backoff_s * attempt)
                     continue
@@ -830,7 +842,7 @@ class SynologyClient:
             if r.status_code != 200:
                 last_error = f"http_{r.status_code}"
                 r.close()
-                sess.close()
+                self._download_pool.release(sess)
                 if attempt < self.max_retries:
                     time.sleep(self.retry_backoff_s * attempt)
                     continue
@@ -843,12 +855,12 @@ class SynologyClient:
             ctype = r.headers.get("Content-Type", "").lower()
             buf = io.BytesIO()
             try:
-                for chunk in r.iter_content(8192):
+                for chunk in r.iter_content(_DOWNLOAD_CHUNK_SIZE):
                     if chunk:
                         buf.write(chunk)
             finally:
                 r.close()
-                sess.close()
+                self._download_pool.release(sess)
             data = buf.getvalue()
             if "json" in ctype or "html" in ctype or "text" in ctype:
                 last_error = f"non-binary {ctype}"

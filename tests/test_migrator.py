@@ -427,3 +427,42 @@ def test_live_item_named_mov_uploads_still_with_image_extension(tmp_path):
     uploader.immich.upload_asset.side_effect = [("motion", False, None), ("still", False, None)]
     mig._process_one_asset({**_LIVE_ITEM, "filename": "IMG_7688.MOV"}, tmp_path, uploader)
     assert uploader.immich.upload_asset.call_args.kwargs["original_filename"] == "IMG_7688.HEIC"
+
+
+def test_transfer_timing_covers_download_and_upload(tmp_path):
+    from unittest.mock import patch
+    syno = MagicMock()
+    path = tmp_path / "image.JPG"
+    path.write_bytes(b"jpeg")
+    syno.download.return_value = path
+    mig = _migrator(tmp_path, syno)
+    uploader = mig.sessions[0]
+    uploader.immich.upload_asset.return_value = ("id", False, None)
+    with patch("synmich.core.migrator.time.perf_counter", side_effect=[1.0, 3.0, 4.0, 9.0]):
+        mig._process_one_asset({"id": 42, "filename": "image.JPG"}, tmp_path, uploader)
+    assert mig.stats.download_seconds == 2.0
+    assert mig.stats.upload_seconds == 5.0
+    assert mig.stats.downloaded_bytes == 4
+
+
+def test_migration_closes_connections_even_on_failure(tmp_path):
+    from unittest.mock import patch
+    mig = _migrator(tmp_path, MagicMock())
+    with patch.object(mig, "run_albums", side_effect=RuntimeError("failed")):
+        with pytest.raises(RuntimeError):
+            mig.run()
+    mig.sessions[0].syno.close_downloads.assert_called_once()
+    mig.sessions[0].immich.close.assert_called_once()
+    assert any("Transfer totals" in msg for msg in mig.stats.last_messages)
+
+
+def test_eta_and_rate_reset_when_starting_another_album():
+    from unittest.mock import patch
+    stats = MigrationStats(start_time=1.0, items_total=100, items_done=100)
+    with patch("synmich.core.migrator.time.time", return_value=3600.0):
+        stats.begin_items(100)
+    stats.items_done = 10
+    with patch("synmich.core.migrator.time.time", return_value=3601.0):
+        assert stats.elapsed_seconds() == 3600.0
+        assert stats.eta_seconds() == 9.0
+        assert stats.rate_per_minute() == 600.0

@@ -10,6 +10,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 from requests_toolbelt import MultipartEncoder
 
+from synmich.core.http_pool import SessionPool
+
 
 class ImmichError(Exception):
     pass
@@ -52,6 +54,16 @@ class ImmichClient:
         self.max_retries = max_retries
         self.retry_backoff_s = retry_backoff_s
         self.timeout = timeout
+        self._http_pool = SessionPool()
+
+    def close(self) -> None:
+        self._http_pool.close()
+
+    def _request(self, method: str, *args, **kwargs):
+        # All Immich responses are buffered (uploads still stream their request
+        # body), so the lease can end as soon as Session.get/post/etc returns.
+        with self._http_pool.session() as session:
+            return getattr(session, method)(*args, **kwargs)
 
     def _retry(self, fn, *args, **kwargs):
         last = None
@@ -76,7 +88,7 @@ class ImmichClient:
     def ping(self) -> bool:
         """Test de connexion."""
         try:
-            r = requests.get(
+            r = self._request("get",
                 f"{self.base_url}/server/ping",
                 timeout=10,
             )
@@ -86,7 +98,7 @@ class ImmichClient:
 
     def me(self) -> Dict[str, Any]:
         def _do():
-            r = requests.get(
+            r = self._request("get",
                 f"{self.base_url}/users/me",
                 headers=self._headers(),
                 timeout=self.timeout,
@@ -104,7 +116,7 @@ class ImmichClient:
             params["shared"] = "true" if shared else "false"
 
         def _do():
-            r = requests.get(
+            r = self._request("get",
                 f"{self.base_url}/albums",
                 headers=self._headers(),
                 params=params,
@@ -117,7 +129,7 @@ class ImmichClient:
 
     def get_album(self, album_id: str) -> Dict[str, Any]:
         def _do():
-            r = requests.get(
+            r = self._request("get",
                 f"{self.base_url}/albums/{album_id}",
                 headers=self._headers(),
                 timeout=self.timeout,
@@ -155,7 +167,7 @@ class ImmichClient:
             return existing
 
         def _do():
-            r = requests.post(
+            r = self._request("post",
                 f"{self.base_url}/albums",
                 headers=self._headers(
                     {"Content-Type": "application/json"}
@@ -191,7 +203,7 @@ class ImmichClient:
 
     def rename_album(self, album_id: str, name: str) -> bool:
         def _do():
-            return requests.patch(
+            return self._request("patch",
                 f"{self.base_url}/albums/{album_id}",
                 headers=self._headers({"Content-Type": "application/json"}),
                 json={"albumName": name},
@@ -203,7 +215,7 @@ class ImmichClient:
 
     def delete_album(self, album_id: str) -> bool:
         def _do():
-            return requests.delete(
+            return self._request("delete",
                 f"{self.base_url}/albums/{album_id}",
                 headers=self._headers(),
                 timeout=self.timeout,
@@ -221,7 +233,7 @@ class ImmichClient:
         """Share with a user. Falls back to legacy schema if needed."""
 
         def _do_new():
-            return requests.put(
+            return self._request("put",
                 f"{self.base_url}/albums/{album_id}/users",
                 headers=self._headers(
                     {"Content-Type": "application/json"}
@@ -240,7 +252,7 @@ class ImmichClient:
 
         # Legacy schema fallback
         def _do_legacy():
-            return requests.put(
+            return self._request("put",
                 f"{self.base_url}/albums/{album_id}/users",
                 headers=self._headers(
                     {"Content-Type": "application/json"}
@@ -313,7 +325,7 @@ class ImmichClient:
                 if visibility:
                     fields["visibility"] = visibility
                 encoder = MultipartEncoder(fields=fields)
-                return requests.post(
+                return self._request("post",
                     f"{self.base_url}/assets",
                     headers=self._headers(
                         {
@@ -348,7 +360,7 @@ class ImmichClient:
             # The upload deduplication response does not apply linkage fields.
             # Explicitly attach the motion when the still already exists.
             def _link_motion():
-                response = requests.put(
+                response = self._request("put",
                     f"{self.base_url}/assets/{d['id']}",
                     headers=self._headers({"Content-Type": "application/json"}),
                     json={"livePhotoVideoId": live_photo_video_id},
@@ -366,7 +378,7 @@ class ImmichClient:
             # HEIC filename. Its checksum then deduplicates to an IMAGE asset,
             # which Immich refuses as livePhotoVideoId. Never link it blindly.
             def _get_type():
-                response = requests.get(
+                response = self._request("get",
                     f"{self.base_url}/assets/{d['id']}",
                     headers=self._headers(), timeout=self.timeout,
                 )
@@ -401,7 +413,7 @@ class ImmichClient:
             return 0, 0
 
         def _do():
-            return requests.put(
+            return self._request("put",
                 f"{self.base_url}/albums/{album_id}/assets",
                 headers=self._headers(
                     {"Content-Type": "application/json"}
@@ -437,7 +449,7 @@ class ImmichClient:
         """Search assets (used for wipe/verify)."""
 
         def _do():
-            r = requests.post(
+            r = self._request("post",
                 f"{self.base_url}/search/metadata",
                 headers=self._headers(
                     {"Content-Type": "application/json"}
@@ -467,7 +479,7 @@ class ImmichClient:
         page = 1
         while True:
             def _do(p=page):
-                r = requests.post(
+                r = self._request("post",
                     f"{self.base_url}/search/metadata",
                     headers=self._headers(
                         {"Content-Type": "application/json"}
@@ -549,7 +561,7 @@ class ImmichClient:
         page = 1
         while True:
             def _do(p=page):
-                r = requests.post(
+                r = self._request("post",
                     f"{self.base_url}/search/metadata",
                     headers=self._headers(
                         {"Content-Type": "application/json"}

@@ -95,8 +95,7 @@ def run_backup(sessions, selected, all_mode, owner_only, dest, stats, control,
             items = [it for it in items
                      if it.get("owner_user_id") == owner_id]
         folder = dest / safe_name(s.name) / safe_name(name)
-        stats.items_total = len(items)
-        stats.items_done = 0
+        stats.begin_items(len(items))
         for it in items:
             if not control.check():
                 break
@@ -126,8 +125,7 @@ def run_backup(sessions, selected, all_mode, owner_only, dest, stats, control,
                 stats.log_message(f"list timeline {s.name}: {e}")
                 continue
             folder = dest / safe_name(s.name) / "timeline"
-            stats.items_total = len(items)
-            stats.items_done = 0
+            stats.begin_items(len(items))
             for it in items:
                 if not control.check():
                     break

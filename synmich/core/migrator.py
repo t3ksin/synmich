@@ -3,6 +3,7 @@
 import logging
 import re
 import threading
+import time
 from concurrent.futures import (
     ThreadPoolExecutor,
     as_completed,
@@ -148,6 +149,9 @@ class MigrationStats:
     """Real-time statistics."""
 
     uploaded: int = 0
+    download_seconds: float = 0.0
+    upload_seconds: float = 0.0
+    downloaded_bytes: int = 0
     duplicate: int = 0
     # External-library mode: photo already present in Immich (matched by
     # filename + capture date), so we linked the existing asset to the album
@@ -163,7 +167,20 @@ class MigrationStats:
     current_step: str = "starting"  # starting | albums | timeline | done
     last_messages: List[str] = field(default_factory=list)
     total_messages_logged: int = 0
-    start_time: float = 0.0  # v1.0.3: set when migration actually begins
+    start_time: float = 0.0  # set when migration actually begins
+    items_start_time: float = 0.0
+
+    def begin_items(self, total: int) -> None:
+        """Start a batch so its ETA is not based on time spent in older albums."""
+        with _STATS_LOCK:
+            self.items_total = total
+            self.items_done = 0
+            self.items_start_time = time.time()
+
+    def items_elapsed_seconds(self) -> float:
+        if self.items_start_time:
+            return max(0.0, time.time() - self.items_start_time)
+        return self.elapsed_seconds()
 
     def bump(self, attr: str, n: int = 1) -> None:
         """Thread-safe increment of a numeric counter."""
@@ -181,7 +198,7 @@ class MigrationStats:
         """v1.0.3: estimated time remaining in seconds."""
         if self.items_done == 0 or self.items_total == 0:
             return 0.0
-        elapsed = self.elapsed_seconds()
+        elapsed = self.items_elapsed_seconds()
         if elapsed < 1:
             return 0.0
         rate = self.items_done / elapsed
@@ -191,7 +208,7 @@ class MigrationStats:
 
     def rate_per_minute(self) -> float:
         """v1.0.3: current processing rate in items per minute."""
-        elapsed = self.elapsed_seconds()
+        elapsed = self.items_elapsed_seconds()
         if elapsed < 1:
             return 0.0
         return self.items_done / elapsed * 60
@@ -560,6 +577,13 @@ class Migrator:
             self._fallback_cache[key] = candidates
         return candidates
 
+    def _upload_asset(self, uploader: UserSession, filepath: Path, **kwargs):
+        started = time.perf_counter()
+        try:
+            return uploader.immich.upload_asset(filepath, **kwargs)
+        finally:
+            self.stats.bump("upload_seconds", time.perf_counter() - started)
+
     def _process_one_asset(
         self,
         item: Dict[str, Any],
@@ -662,12 +686,17 @@ class Migrator:
             return None, uploader.name
 
         motion_path: Optional[Path] = None
-        if item.get("type") == "live":
-            filepath, motion_path = uploader.syno.download_live_photo(
-                item, folder
-            )
-        else:
-            filepath = uploader.syno.download(item, folder)
+        started = time.perf_counter()
+        try:
+            if item.get("type") == "live":
+                filepath, motion_path = uploader.syno.download_live_photo(item, folder)
+            else:
+                filepath = uploader.syno.download(item, folder)
+        finally:
+            self.stats.bump("download_seconds", time.perf_counter() - started)
+        self.stats.bump("downloaded_bytes", sum(
+            path.stat().st_size for path in (filepath, motion_path) if path
+        ))
         if not filepath:
             self.checkpoint.mark_failed(
                 uploader.name, syno_id, error="download_failed"
@@ -714,8 +743,8 @@ class Migrator:
         if motion_path:
             motion_name = f"{Path(item['filename']).stem}.MOV"
             live_photo_video_id, _, motion_err = (
-                uploader.immich.upload_asset(
-                    motion_path,
+                self._upload_asset(
+                    uploader, motion_path,
                     device_id=f"synology-{uploader.name}",
                     device_asset_id=device_asset_id(
                         uploader.name, f"{syno_id}_motion"
@@ -743,8 +772,8 @@ class Migrator:
             if original_filename.startswith(f"{syno_id}_"):
                 original_filename = original_filename[len(syno_id) + 1:]
 
-        asset_id, was_dup, err = uploader.immich.upload_asset(
-            filepath,
+        asset_id, was_dup, err = self._upload_asset(
+            uploader, filepath,
             device_id=f"synology-{uploader.name}",
             device_asset_id=device_asset_id(uploader.name, syno_id),
             file_created_at=created_at,
@@ -945,8 +974,7 @@ class Migrator:
             / safe_name(name)
         )
 
-        self.stats.items_total = len(items)
-        self.stats.items_done = 0
+        self.stats.begin_items(len(items))
 
         if self.workers <= 1:
             self._process_items_sequential(
@@ -1133,8 +1161,7 @@ class Migrator:
                 / safe_name(name)
             )
 
-            self.stats.items_total = len(user_items)
-            self.stats.items_done = 0
+            self.stats.begin_items(len(user_items))
 
             if self.workers <= 1:
                 self._process_items_sequential(
@@ -1413,8 +1440,7 @@ class Migrator:
                 )
                 continue
 
-            self.stats.items_total = len(items)
-            self.stats.items_done = 0
+            self.stats.begin_items(len(items))
             self._log(
                 f"   📸 {len(items)} items"
             )
@@ -1488,8 +1514,7 @@ class Migrator:
             self.work_dir / owner.output_dir_name / "_shared_space"
         )
         uploaded_by_uploader: Dict[str, List[str]] = {}
-        self.stats.items_total = len(items)
-        self.stats.items_done = 0
+        self.stats.begin_items(len(items))
 
         if self.workers <= 1:
             self._process_items_sequential(
@@ -1569,3 +1594,12 @@ class Migrator:
             self.checkpoint.save()
         finally:
             self._stop_keepalives(keepalives)
+            for session in self.sessions:
+                session.syno.close_downloads()
+                session.immich.close()
+            self._log(
+                f"Transfer totals: {self.stats.downloaded_bytes / (1024 * 1024):.1f} MiB "
+                f"downloaded; download={self.stats.download_seconds:.2f} worker-s; "
+                f"Immich upload/checksum={self.stats.upload_seconds:.2f} worker-s "
+                "(parallel worker times overlap)"
+            )

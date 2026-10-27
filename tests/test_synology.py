@@ -390,7 +390,7 @@ def test_video_error_117_falls_back_to_streamed_item_download(tmp_path, shared):
         "SYNO.FotoTeam.Download" if shared else "SYNO.Foto.Download"
     )
     assert calls[1].kwargs["stream"] is True
-    success.iter_content.assert_called_once_with(8192)
+    success.iter_content.assert_called_once_with(1024 * 1024)
     error.close.assert_called_once()
     success.close.assert_called_once()
 

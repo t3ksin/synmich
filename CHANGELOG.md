@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-10-27
+
 ### Performance
 
 - Reuse TCP/TLS connections for Immich API calls and Synology downloads via

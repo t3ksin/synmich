@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "synmich"
-version = "2.3.2"
+version = "2.4.0"
 description = "Synology Photos → Immich migration & local backup, with a GUI and shared-album support"
 readme = "README.md"
 license = { text = "MIT" }
@@ -31,6 +31,8 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Multimedia :: Graphics",
     "Topic :: System :: Archiving :: Backup",
 ]

@@ -28,7 +28,7 @@ def _save_item(syno, it, folder):
     """Download one item; Live Photos drop still + motion in the same folder."""
     if it.get("type") == "live":
         still, motion = syno.download_live_photo(it, folder)
-        return still or motion
+        return still if still and motion else None
     return syno.download(it, folder)
 from synmich.gui import widgets as W
 from synmich.ui.album_selector import _build_records

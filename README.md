@@ -173,6 +173,23 @@ To deliberately upload unmatched files, set `migration.external_library_fallback
 
 ---
 
+## Live Photo troubleshooting
+
+Synology Live Photos are migrated as an image plus its motion video. synmich
+checks the downloaded content rather than assuming thumbnail ids identify
+these parts. Missing motion or failed linkage is reported as a retryable error;
+the image is not marked complete on its own. Re-running retries failed items,
+including failures in albums previously marked complete by older versions.
+
+If a previous migration stored video bytes as an image in Immich, checksum
+deduplication may return that incorrectly typed asset. The log reports
+`duplicate_type_mismatch` with its Immich asset id for review; synmich does not
+delete or rewrite existing media. Images already marked successful by an older
+version's still-only fallback are not automatically reprocessed. Back up your
+Immich data before reviewing or repairing those older assets.
+
+---
+
 ## ⌨️ CLI (for power users)
 
 Prefer the terminal, or scripting / cron? Everything is available on the command line too — including a **full interactive setup wizard** (`synmich init`) that walks you through servers, users and options, plus a **live dashboard** during the migration.

@@ -137,3 +137,47 @@ def test_upload_asset_rebuilds_encoder_on_retry(tmp_path):
     assert result == ("vid-2", False, None)
     assert post.call_count == 2
     assert isinstance(post.call_args.kwargs["data"], MultipartEncoder)
+
+
+@pytest.mark.parametrize("asset_type", ["VIDEO", "IMAGE"])
+def test_motion_duplicate_type_is_checked_before_linking(tmp_path, asset_type):
+    filepath = tmp_path / "motion.MOV"
+    filepath.write_bytes(b"video")
+    response = MagicMock(status_code=200)
+    response.json.return_value = {"id": "old-asset", "status": "duplicate"}
+    detail = MagicMock(status_code=200)
+    detail.json.return_value = {"id": "old-asset", "type": asset_type}
+    with patch("synmich.core.immich.requests.post", return_value=response):
+        with patch("synmich.core.immich.requests.get", return_value=detail) as get:
+            result = ImmichClient("https://immich.example", "key").upload_asset(
+                filepath, expected_type="VIDEO"
+            )
+    assert get.call_args.args[0] == "https://immich.example/api/assets/old-asset"
+    if asset_type == "VIDEO":
+        assert result == ("old-asset", True, None)
+    else:
+        assert result[0] is None
+        assert "duplicate_type_mismatch" in result[2]
+        assert "old-asset" in result[2]
+
+
+@pytest.mark.parametrize("link_fails", [False, True])
+def test_existing_live_still_gets_explicit_motion_link(tmp_path, link_fails):
+    filepath = tmp_path / "still.HEIC"
+    filepath.write_bytes(b"image")
+    response = MagicMock(status_code=200)
+    response.json.return_value = {"id": "still", "status": "duplicate"}
+    linked = MagicMock(status_code=200)
+    if link_fails:
+        linked.raise_for_status.side_effect = requests.exceptions.HTTPError("403 Forbidden")
+    with patch("synmich.core.immich.requests.post", return_value=response):
+        with patch("synmich.core.immich.requests.put", return_value=linked) as put:
+            result = ImmichClient("https://immich.example", "key", max_retries=1).upload_asset(
+                filepath, live_photo_video_id="motion"
+            )
+    assert put.call_args.kwargs["json"] == {"livePhotoVideoId": "motion"}
+    if link_fails:
+        assert result[0] is None
+        assert "live_photo_link_failed" in result[2]
+    else:
+        assert result == ("still", True, None)

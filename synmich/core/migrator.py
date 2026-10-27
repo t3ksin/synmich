@@ -679,6 +679,17 @@ class Migrator:
             )
             return None, uploader.name
 
+        if item.get("type") == "live" and motion_path is None:
+            self.checkpoint.mark_failed(
+                uploader.name, syno_id, error="live_photo_motion_missing"
+            )
+            self.stats.bump("failed")
+            self._log(
+                f"✖ {item.get('filename')}: Live Photo motion missing or invalid — "
+                "kept for retry; not marked complete as a still image"
+            )
+            return None, uploader.name
+
         # Check size limit
         max_mb = (
             self.config.get("filters", {})
@@ -712,20 +723,32 @@ class Migrator:
                     file_created_at=created_at,
                     original_filename=motion_name,
                     visibility="hidden",
+                    expected_type="VIDEO",
                 )
             )
             if not live_photo_video_id:
                 self._log(
                     f"⚠ {item.get('filename')}: motion upload failed "
-                    f"({motion_err}) — still image only"
+                    f"({motion_err}) — kept for retry"
                 )
+                self.checkpoint.mark_failed(
+                    uploader.name, syno_id, error=motion_err or "motion_upload_failed"
+                )
+                self.stats.bump("failed")
+                return None, uploader.name
+
+        original_filename = item["filename"]
+        if motion_path and Path(original_filename).suffix.lower() in {".mov", ".mp4", ".m4v"}:
+            original_filename = filepath.name
+            if original_filename.startswith(f"{syno_id}_"):
+                original_filename = original_filename[len(syno_id) + 1:]
 
         asset_id, was_dup, err = uploader.immich.upload_asset(
             filepath,
             device_id=f"synology-{uploader.name}",
             device_asset_id=device_asset_id(uploader.name, syno_id),
             file_created_at=created_at,
-            original_filename=item["filename"],
+            original_filename=original_filename,
             live_photo_video_id=live_photo_video_id,
         )
 
@@ -799,13 +822,22 @@ class Migrator:
 
         # Already done? Accept the legacy local-<id> key so resumed runs
         # after this fix don't re-migrate albums marked done by older builds.
-        if (
-            self.checkpoint.is_album_done(passphrase)
-            or (
-                legacy_key != passphrase
-                and self.checkpoint.is_album_done(legacy_key)
-            )
-        ):
+        already_done = self.checkpoint.is_album_done(passphrase) or (
+            legacy_key != passphrase and self.checkpoint.is_album_done(legacy_key)
+        )
+        if already_done and owner_guess and self.checkpoint.has_failed_items():
+            # Older versions marked albums done despite failed downloads.
+            # Reopen only albums containing unresolved failures, without
+            # forcing users to reset all of their migration progress.
+            try:
+                album_items = owner_guess.syno.list_items(album_id=album["id"])
+            except Exception as e:
+                self._log(f"✖ Check failed items in '{name}': {e}")
+                return
+            if self.checkpoint.has_failed_items([str(it["id"]) for it in album_items]):
+                already_done = False
+                self._log(f"↻ Retrying failed items in previously completed album: {name}")
+        if already_done:
             self._log(f"⏭ Already done: {name}")
             self.stats.albums_done += 1
             return

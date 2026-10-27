@@ -162,12 +162,16 @@ def test_live_photo_not_skipped_when_videos_disabled(tmp_path):
     syno = MagicMock()
     still = tmp_path / "still.HEIC"
     still.write_bytes(b"heic")
-    syno.download_live_photo.return_value = (still, None)
+    motion = tmp_path / "motion.MOV"
+    motion.write_bytes(b"mov")
+    syno.download_live_photo.return_value = (still, motion)
 
     mig = _migrator(tmp_path, syno)
     mig.include_videos = False
     uploader = mig.sessions[0]
-    uploader.immich.upload_asset.return_value = ("still-id", False, None)
+    uploader.immich.upload_asset.side_effect = [
+        ("motion-id", False, None), ("still-id", False, None)
+    ]
 
     asset_id, _ = mig._process_one_asset(_LIVE_ITEM, tmp_path, uploader)
     assert asset_id == "still-id"
@@ -358,3 +362,68 @@ def test_ambiguous_external_filename_is_reported_without_upload(tmp_path):
     assert mig._process_one_asset(item, tmp_path, uploader)[0] is None
     assert mig.stats.failed == 1
     uploader.immich.upload_asset.assert_not_called()
+
+
+def test_missing_live_motion_remains_retryable(tmp_path):
+    syno = MagicMock()
+    still = tmp_path / "still.HEIC"
+    still.write_bytes(b"heic")
+    syno.download_live_photo.return_value = (still, None)
+    mig = _migrator(tmp_path, syno)
+    uploader = mig.sessions[0]
+    assert mig._process_one_asset(_LIVE_ITEM, tmp_path, uploader)[0] is None
+    assert mig.stats.failed == 1
+    assert mig.checkpoint.is_uploaded("cyrille", "12534") is None
+    assert still.exists()
+    uploader.immich.upload_asset.assert_not_called()
+
+
+def test_failed_motion_upload_does_not_complete_or_delete_live_photo(tmp_path):
+    syno = MagicMock()
+    still = tmp_path / "still.HEIC"
+    motion = tmp_path / "motion.MOV"
+    still.write_bytes(b"heic")
+    motion.write_bytes(b"mov")
+    syno.download_live_photo.return_value = (still, motion)
+    mig = _migrator(tmp_path, syno)
+    uploader = mig.sessions[0]
+    uploader.immich.upload_asset.return_value = (None, False, "duplicate_type_mismatch")
+    assert mig._process_one_asset(_LIVE_ITEM, tmp_path, uploader)[0] is None
+    assert mig.stats.failed == 1
+    assert mig.checkpoint.is_uploaded("cyrille", "12534") is None
+    assert uploader.immich.upload_asset.call_count == 1
+    assert uploader.immich.upload_asset.call_args.kwargs["expected_type"] == "VIDEO"
+    assert still.exists() and motion.exists()
+
+
+def test_failed_live_photo_in_old_completed_album_is_retried(tmp_path):
+    syno = MagicMock()
+    mig = _migrator(tmp_path, syno)
+    mig.external_library_mode = True
+    uploader = mig.sessions[0]
+    uploader.immich.create_album.return_value = "album"
+    uploader.immich.add_assets_to_album.return_value = (1, 0)
+    mig._asset_index["cyrille"] = {"a.jpg": [("ext", None, "lib")]}
+    syno.list_items.return_value = [
+        {"id": 42, "filename": "a.jpg", "owner_user_id": 1}
+    ]
+    mig.checkpoint.mark_failed("cyrille", "42", "download_failed")
+    mig.checkpoint.mark_album_done("local-cyrille-3")
+    mig._process_album({"id": 3, "name": "Trip", "owner_user_id": 1})
+    assert mig.checkpoint.is_uploaded("cyrille", "42") == "ext"
+    assert not mig.checkpoint.has_failed_items()
+    assert mig.stats.linked == 1
+
+
+def test_live_item_named_mov_uploads_still_with_image_extension(tmp_path):
+    syno = MagicMock()
+    still = tmp_path / "12534_IMG_7688.HEIC"
+    motion = tmp_path / "12534_IMG_7688.MOV"
+    still.write_bytes(b"heic")
+    motion.write_bytes(b"mov")
+    syno.download_live_photo.return_value = (still, motion)
+    mig = _migrator(tmp_path, syno)
+    uploader = mig.sessions[0]
+    uploader.immich.upload_asset.side_effect = [("motion", False, None), ("still", False, None)]
+    mig._process_one_asset({**_LIVE_ITEM, "filename": "IMG_7688.MOV"}, tmp_path, uploader)
+    assert uploader.immich.upload_asset.call_args.kwargs["original_filename"] == "IMG_7688.HEIC"

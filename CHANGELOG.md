@@ -4,6 +4,15 @@
 
 ### Fixed
 
+- **Live Photos and Synology error 117 (#13).** Prefer the logical-item ZIP
+  even when thumbnail and item ids differ, validate image/video contents, and
+  handle reversed unit roles. When a regular unit download returns error 117,
+  retry via the item endpoint while streaming to disk. Link motion explicitly
+  if the still already exists in Immich; check duplicate motion assets really
+  are videos before linking. Missing/invalid motion stays a retryable failure
+  instead of silently completing as a still. Previously completed albums with
+  unresolved failures are reopened automatically. No existing media is deleted.
+
 - **External-library duplicates (#12).** External-library mode now links only:
   unmatched/ambiguous photos and lookup failures are reported for retry instead
   of silently uploaded. Incomplete albums stay retryable. Set

@@ -262,6 +262,7 @@ class ImmichClient:
         original_filename: Optional[str] = None,
         live_photo_video_id: Optional[str] = None,
         visibility: Optional[str] = None,
+        expected_type: Optional[str] = None,
     ) -> Tuple[Optional[str], bool, Optional[str]]:
         """
         Upload a file to Immich.
@@ -342,6 +343,45 @@ class ImmichClient:
             d = r.json()
         except Exception:
             return None, False, "invalid_json"
+
+        if live_photo_video_id and d.get("status") == "duplicate" and d.get("id"):
+            # The upload deduplication response does not apply linkage fields.
+            # Explicitly attach the motion when the still already exists.
+            def _link_motion():
+                response = requests.put(
+                    f"{self.base_url}/assets/{d['id']}",
+                    headers=self._headers({"Content-Type": "application/json"}),
+                    json={"livePhotoVideoId": live_photo_video_id},
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+
+            try:
+                self._retry(_link_motion)
+            except Exception as e:
+                return None, False, f"live_photo_link_failed: {e}"
+
+        if expected_type and d.get("status") == "duplicate" and d.get("id"):
+            # A previous broken migration may have uploaded MOV bytes under a
+            # HEIC filename. Its checksum then deduplicates to an IMAGE asset,
+            # which Immich refuses as livePhotoVideoId. Never link it blindly.
+            def _get_type():
+                response = requests.get(
+                    f"{self.base_url}/assets/{d['id']}",
+                    headers=self._headers(), timeout=self.timeout,
+                )
+                response.raise_for_status()
+                return response.json().get("type")
+
+            try:
+                actual_type = self._retry(_get_type)
+            except Exception as e:
+                return None, False, f"duplicate_type_check_failed: {e}"
+            if actual_type != expected_type:
+                return None, False, (
+                    f"duplicate_type_mismatch: expected {expected_type}, got {actual_type}; "
+                    f"existing asset {d['id']} needs review in Immich"
+                )
 
         return (
             d.get("id"),

@@ -71,6 +71,72 @@ _STILL_EXTS = {
 _MOTION_EXTS = {".mov", ".mp4", ".m4v"}
 
 
+def media_kind(path: Path) -> Optional[str]:
+    """Identify Live Photo image/video bytes without trusting NAS filenames.
+
+    HEIF stills and QuickTime movies both use ISO BMFF containers; inspect
+    the ftyp brands so a HEIC returned under a .MOV name is not linked as video.
+    Only a small header is read, including for large motion clips.
+    """
+    with path.open("rb") as stream:
+        header = stream.read(256)
+    if header.startswith((b"\xff\xd8\xff", b"\x89PNG\r\n\x1a\n", b"II*\x00", b"MM\x00*")):
+        return "image"
+    if header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+        return "image"
+    if header[4:8] == b"ftyp":
+        box_size = int.from_bytes(header[:4], "big")
+        brands = [header[8:12]] + [
+            header[i:i + 4] for i in range(16, min(box_size, len(header)), 4)
+        ]
+        if set(brands) & {
+            b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis",
+            b"mif1", b"msf1", b"avif", b"avis",
+        }:
+            return "image"
+        if set(brands) & {b"qt  ", b"isom", b"iso2", b"mp41", b"mp42", b"M4V "}:
+            return "video"
+    # Older QuickTime MOV files can omit ftyp entirely.
+    if header[4:8] in {b"moov", b"mdat", b"wide"}:
+        return "video"
+    return None
+
+
+def _validate_live_pair(
+    still: Optional[Path], motion: Optional[Path]
+) -> Tuple[Optional[Path], Optional[Path]]:
+    still_kind = media_kind(still) if still else None
+    motion_kind = media_kind(motion) if motion else None
+    if still and motion and still_kind == "video" and motion_kind == "image":
+        # Some Photos versions reverse the presumed item/thumbnail roles.
+        # Swap the bytes so local backups also retain the correct extensions.
+        swap = still.with_name(still.name + ".swap")
+        still.replace(swap)
+        motion.replace(still)
+        swap.replace(motion)
+        still_kind, motion_kind = "image", "video"
+    if still_kind != "image":
+        log.warning("Live Photo still is not a recognized image: %s", still)
+        return None, None
+    if still and still.suffix.lower() not in _STILL_EXTS:
+        with still.open("rb") as stream:
+            header = stream.read(12)
+        extension = ".HEIC"
+        if header.startswith(b"\xff\xd8\xff"):
+            extension = ".JPG"
+        elif header.startswith(b"\x89PNG"):
+            extension = ".PNG"
+        elif header.startswith((b"II*\x00", b"MM\x00*")):
+            extension = ".TIFF"
+        elif header[8:12] == b"WEBP":
+            extension = ".webp"
+        still = still.replace(still.with_suffix(extension))
+    if motion_kind != "video":
+        log.warning("Live Photo motion is missing or is not a video: %s", motion)
+        return still, None
+    return still, motion
+
+
 def extract_live_bundle(
     data: bytes,
 ) -> Optional[Tuple[str, bytes, str, bytes]]:
@@ -481,6 +547,7 @@ class SynologyClient:
         folder: Path,
         unit_id: Optional[Any] = None,
         cache_key: Optional[str] = None,
+        _by_item_id: bool = False,
     ) -> Optional[Path]:
         """Download an item. Returns local path or None.
 
@@ -504,6 +571,7 @@ class SynologyClient:
         # filename passed to Immich, this is only for local storage.
         filepath = folder / f"{item_id}_{original_filename}"
 
+        explicit_unit = unit_id is not None
         if unit_id is None:
             unit_id, cache_key = download_unit(item)
         download_api = (
@@ -532,6 +600,11 @@ class SynologyClient:
             "cache_key": cache_key,
             "_sid": sid,
         }
+
+        if _by_item_id:
+            params.pop("unit_id")
+            params.pop("cache_key")
+            params["item_id"] = json.dumps([item_id])
 
         last_error = None
         for attempt in range(1, self.max_retries + 1):
@@ -576,10 +649,12 @@ class SynologyClient:
 
             ctype = r.headers.get("Content-Type", "").lower()
             if "json" in ctype or "html" in ctype or "text" in ctype:
+                error_code = None
                 body = ""
                 try:
                     body = r.text[:300]
                     err = r.json()
+                    error_code = (err.get("error") or {}).get("code")
                     last_error = (
                         f"api_error {(err.get('error') or {}).get('code')} "
                         f"{body}"
@@ -588,6 +663,10 @@ class SynologyClient:
                     last_error = f"non-binary {ctype}: {body[:200]}"
                 r.close()
                 sess.close()
+                if error_code == 117 and not _by_item_id and not explicit_unit:
+                    # Some DSM versions reject valid video unit_ids. Try the
+                    # logical item endpoint once, keeping the response streamed.
+                    return self.download(item, folder, _by_item_id=True)
                 # Application-level errors (e.g. 117) used to be returned
                 # as HTTP 200 + JSON and never retried, because _retry()
                 # only catches network exceptions.
@@ -639,38 +718,33 @@ class SynologyClient:
     ) -> Tuple[Optional[Path], Optional[Path]]:
         """Download a Live Photo as ``(still, motion)``.
 
-        Two Synology layouts exist:
-
-        * Older Photos: ``item.id`` is the MOV and ``thumbnail.unit_id``
-          is the HEIC (``live_photo_parts``).
-        * Photos 1.9+: both share the same id; ``unit_id`` download is
-          the HEIC only, while ``item_id`` download is a zip of HEIC+MOV.
+        Prefer the explicit item bundle even when thumbnail.unit_id differs:
+        that difference can also mean a duplicate-linked still, not a motion id.
+        Older NAS versions without bundles fall back to the two-unit layout,
+        with content validation before either file is used.
         """
+        if item.get("type") == "live":
+            bundled = self._download_live_zip(item, folder)
+            if bundled[0] is not None and bundled[1] is not None:
+                return bundled
+
         parts = live_photo_parts(item)
         if parts:
             still_id, still_cache, motion_id, motion_cache = parts
-            original_name = item["filename"]
-            motion_name = f"{Path(original_name).stem}.MOV"
+            original_name = Path(item["filename"])
+            motion_name = f"{original_name.stem}.MOV"
+            if original_name.suffix.lower() in _MOTION_EXTS:
+                motion_name = f"{original_name.stem}.motion.MOV"
             motion = self.download(
-                {**item, "filename": motion_name},
-                folder,
-                unit_id=motion_id,
-                cache_key=motion_cache,
+                {**item, "filename": motion_name}, folder,
+                unit_id=motion_id, cache_key=motion_cache,
             )
             still = self.download(
-                item,
-                folder,
-                unit_id=still_id,
-                cache_key=still_cache,
+                item, folder, unit_id=still_id, cache_key=still_cache,
             )
-            return still, motion
+            return _validate_live_pair(still, motion)
 
-        if item.get("type") == "live":
-            bundled = self._download_live_zip(item, folder)
-            if bundled[0] is not None:
-                return bundled
-
-        return self.download(item, folder), None
+        return _validate_live_pair(self.download(item, folder), None)
 
     def _download_live_zip(
         self,
@@ -691,7 +765,7 @@ class SynologyClient:
         motion_path = folder / f"{item_id}_{motion_name}"
         still_path.write_bytes(still_bytes)
         motion_path.write_bytes(motion_bytes)
-        return still_path, motion_path
+        return _validate_live_pair(still_path, motion_path)
 
     def _download_item_id_bytes(self, item: Dict[str, Any]) -> Optional[bytes]:
         """GET SYNO.Foto.Download with ``item_id`` (zip for Live Photos)."""

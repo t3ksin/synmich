@@ -18,9 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import shutil
-import stat
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -380,6 +378,23 @@ class Checkpoint:
             self.data["counters"]["failed"] = (
                 self.data["counters"].get("failed", 0) + 1
             )
+
+    def has_failed_items(self, syno_ids: Optional[List[str]] = None) -> bool:
+        """Whether unresolved failures exist, optionally restricted to an album.
+
+        Older versions marked albums complete even when some items failed.
+        Ignore stale failure records for items since migrated successfully.
+        """
+        wanted = set(syno_ids) if syno_ids is not None else None
+        with self.lock:
+            for user, failed in self.data.get("failed_items", {}).items():
+                completed = self.data.get("syno_to_immich", {}).get(user, {})
+                if any(
+                    item_id not in completed and (wanted is None or item_id in wanted)
+                    for item_id in failed
+                ):
+                    return True
+        return False
 
     def is_album_done(self, passphrase: str) -> bool:
         with self.lock:

@@ -10,6 +10,7 @@ from synmich.core.synology import (
     download_unit,
     extract_live_bundle,
     live_photo_parts,
+    media_kind,
 )
 
 
@@ -91,6 +92,10 @@ def test_list_items_requests_thumbnail_additional():
     assert "thumbnail" in extra["additional"]
 
 
+HEIC = b"\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1heic"
+MOV = b"\x00\x00\x00\x14ftypqt  \x00\x00\x00\x00qt  "
+
+
 _LIVE = {
     "id": 12534,
     "filename": "IMG_7688.HEIC",
@@ -134,7 +139,9 @@ def test_download_live_photo_forces_motion_unit_id(tmp_path):
 
     def fake_download(item, folder, unit_id=None, cache_key=None):
         calls.append((item["filename"], unit_id, cache_key))
-        return tmp_path / item["filename"]
+        path = tmp_path / item["filename"]
+        path.write_bytes(MOV if path.suffix == ".MOV" else HEIC)
+        return path
 
     client.download = fake_download
     still, motion = client.download_live_photo(_LIVE, tmp_path)
@@ -152,13 +159,13 @@ def test_extract_live_bundle_splits_heic_and_mov():
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("IMG_1786.HEIC", b"heic-bytes")
-        zf.writestr("IMG_1786.MOV", b"mov-bytes")
+        zf.writestr("IMG_1786.HEIC", HEIC)
+        zf.writestr("IMG_1786.MOV", MOV)
     still_name, still, motion_name, motion = extract_live_bundle(buf.getvalue())
     assert still_name == "IMG_1786.HEIC"
-    assert still == b"heic-bytes"
+    assert still == HEIC
     assert motion_name == "IMG_1786.MOV"
-    assert motion == b"mov-bytes"
+    assert motion == MOV
 
 
 def test_extract_live_bundle_none_for_plain_heic():
@@ -169,7 +176,9 @@ def test_download_live_photo_falls_back_when_parts_unavailable(tmp_path):
     client = SynologyClient("http://nas:5000")
     item = {**_LIVE, "additional": {"thumbnail": {"unit_id": 12534}}}
     client._download_live_zip = lambda it, folder: (None, None)
-    client.download = lambda it, folder, **_k: tmp_path / it["filename"]
+    path = tmp_path / item["filename"]
+    path.write_bytes(HEIC)
+    client.download = lambda it, folder, **_k: path
     still, motion = client.download_live_photo(item, tmp_path)
     assert still.name == "IMG_7688.HEIC"
     assert motion is None
@@ -183,8 +192,8 @@ def test_download_live_photo_extracts_item_id_zip(tmp_path):
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("IMG_7688.HEIC", b"heic-bytes")
-        zf.writestr("IMG_7688.MOV", b"mov-bytes")
+        zf.writestr("IMG_7688.HEIC", HEIC)
+        zf.writestr("IMG_7688.MOV", MOV)
     zip_bytes = buf.getvalue()
 
     client = SynologyClient("http://nas:5000", max_retries=1, retry_backoff_s=0)
@@ -204,8 +213,8 @@ def test_download_live_photo_extracts_item_id_zip(tmp_path):
         sess.get.return_value = zip_resp
         still, motion = client.download_live_photo(item, tmp_path)
 
-    assert still is not None and still.read_bytes() == b"heic-bytes"
-    assert motion is not None and motion.read_bytes() == b"mov-bytes"
+    assert still is not None and still.read_bytes() == HEIC
+    assert motion is not None and motion.read_bytes() == MOV
     params = sess.get.call_args.kwargs["params"]
     assert params["item_id"] == "[12534]"
     assert "unit_id" not in params
@@ -308,3 +317,123 @@ def test_download_uses_thumbnail_unit_id_in_request(tmp_path):
     params = sess.get.call_args.kwargs["params"]
     assert params["unit_id"] == "[435419]"
     assert params["cache_key"] == "435419_1778357880"
+
+
+def test_bundle_preferred_even_when_thumbnail_has_different_id(tmp_path):
+    client = SynologyClient("http://nas:5000")
+    still = tmp_path / "image.HEIC"
+    motion = tmp_path / "motion.MOV"
+    still.write_bytes(HEIC)
+    motion.write_bytes(MOV)
+    with patch.object(client, "_download_live_zip", return_value=(still, motion)):
+        with patch.object(client, "download") as download:
+            assert client.download_live_photo(_LIVE, tmp_path) == (still, motion)
+    download.assert_not_called()
+
+
+@pytest.mark.parametrize("swapped", [False, True])
+def test_split_live_photo_checks_content_instead_of_unit_roles(tmp_path, swapped):
+    client = SynologyClient("http://nas:5000")
+    client._download_live_zip = lambda *_: (None, None)
+
+    def download(item, folder, **kwargs):
+        path = folder / item["filename"]
+        is_motion_name = path.suffix == ".MOV"
+        path.write_bytes(MOV if is_motion_name != swapped else HEIC)
+        return path
+
+    client.download = download
+    still, motion = client.download_live_photo(_LIVE, tmp_path)
+    assert still.read_bytes() == HEIC
+    assert motion.read_bytes() == MOV
+    assert motion.suffix == ".MOV"
+
+
+def test_still_bytes_returned_as_mov_are_not_a_live_video(tmp_path):
+    client = SynologyClient("http://nas:5000")
+    client._download_live_zip = lambda *_: (None, None)
+
+    def download(item, folder, **kwargs):
+        path = folder / item["filename"]
+        path.write_bytes(HEIC)
+        return path
+
+    client.download = download
+    still, motion = client.download_live_photo(_LIVE, tmp_path)
+    assert still.read_bytes() == HEIC
+    assert motion is None
+
+
+@pytest.mark.parametrize("shared", [False, True])
+def test_video_error_117_falls_back_to_streamed_item_download(tmp_path, shared):
+    import requests as req
+    client = SynologyClient("http://nas:5000", max_retries=1)
+    client.sid = "sid"
+    client.session = MagicMock()
+    client.session.cookies = req.cookies.RequestsCookieJar()
+    error = MagicMock(status_code=200)
+    error.headers = {"Content-Type": "application/json"}
+    error.text = '{"success":false,"error":{"code":117}}'
+    error.json.return_value = {"success": False, "error": {"code": 117}}
+    success = MagicMock(status_code=200)
+    success.headers = {"Content-Type": "video/quicktime"}
+    success.iter_content.return_value = [MOV]
+    item = {"id": 105315, "filename": "IMG_0002.MOV", "owner_user_id": 0 if shared else 1}
+    with patch("synmich.core.synology.requests.Session") as factory:
+        factory.return_value.get.side_effect = [error, success]
+        path = client.download(item, tmp_path)
+        calls = factory.return_value.get.call_args_list
+    assert path.read_bytes() == MOV
+    assert calls[1].kwargs["params"]["item_id"] == "[105315]"
+    assert "unit_id" not in calls[1].kwargs["params"]
+    assert calls[1].kwargs["params"]["api"] == (
+        "SYNO.FotoTeam.Download" if shared else "SYNO.Foto.Download"
+    )
+    assert calls[1].kwargs["stream"] is True
+    success.iter_content.assert_called_once_with(8192)
+    error.close.assert_called_once()
+    success.close.assert_called_once()
+
+
+@pytest.mark.parametrize("payload,kind", [
+    (HEIC, "image"), (MOV, "video"),
+    (b"\xff\xd8\xffJPEG", "image"), (b"<html>error</html>", None),
+    (b"\x00\x00\x00\x08wide", "video"),
+])
+def test_media_kind_ignores_filename(tmp_path, payload, kind):
+    path = tmp_path / "misleading.MOV"
+    path.write_bytes(payload)
+    assert media_kind(path) == kind
+
+
+def test_live_photo_named_after_motion_keeps_both_files(tmp_path):
+    client = SynologyClient("http://nas:5000")
+    client._download_live_zip = lambda *_: (None, None)
+
+    def download(item, folder, unit_id=None, **kwargs):
+        path = folder / item["filename"]
+        path.write_bytes(HEIC if unit_id == 12542 else MOV)
+        return path
+
+    client.download = download
+    still, motion = client.download_live_photo({**_LIVE, "filename": "IMG_7688.MOV"}, tmp_path)
+    assert still != motion
+    assert still.read_bytes() == HEIC
+    assert motion.read_bytes() == MOV
+    assert still.suffix == ".HEIC"
+
+
+def test_error_117_item_fallback_is_bounded(tmp_path):
+    import requests as req
+    client = SynologyClient("http://nas:5000", max_retries=1, retry_backoff_s=0)
+    client.sid = "sid"
+    client.session = MagicMock()
+    client.session.cookies = req.cookies.RequestsCookieJar()
+    error = MagicMock(status_code=200)
+    error.headers = {"Content-Type": "application/json"}
+    error.json.return_value = {"success": False, "error": {"code": 117}}
+    error.text = '{"error":{"code":117}}'
+    with patch("synmich.core.synology.requests.Session") as factory:
+        factory.return_value.get.return_value = error
+        assert client.download({"id": 42, "filename": "video.MOV"}, tmp_path) is None
+        assert factory.return_value.get.call_count == 2

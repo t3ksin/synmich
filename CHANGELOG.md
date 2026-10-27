@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **External-library duplicates (#12).** External-library mode now links only:
+  unmatched/ambiguous photos and lookup failures are reported for retry instead
+  of silently uploaded. Incomplete albums stay retryable. Set
+  `migration.external_library_fallback_upload: true` to opt into the previous
+  upload fallback; existing configurations use the new safe default.
+
 ## [2.3.2] - 2026-08-27
 
 ### Fixed

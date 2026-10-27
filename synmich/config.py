@@ -68,8 +68,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # photo to the existing asset by filename + capture date and adds it
         # to the album WITHOUT re-uploading — avoiding the duplicate copy that
         # Immich's checksum dedup can't catch for external assets (see
-        # immich-app/immich#7804). Photos with no match are uploaded normally.
+        # immich-app/immich#7804). Unmatched photos are reported for retry.
         "external_library_mode": False,
+        # Opt in to uploading unmatched photos (may create external duplicates).
+        "external_library_fallback_upload": False,
         "include_shared_space": True,
         # Name of the user who becomes owner of Shared Space photos
         "shared_space_owner": "",

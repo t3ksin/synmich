@@ -364,10 +364,13 @@ class Migrator:
         # catch it because external assets carry a dummy path-based checksum
         # (immich-app/immich#7804). In this mode we instead match each Synology
         # photo to the existing asset by filename + capture date and just add
-        # that asset to the album, downloading nothing. If no match is found we
-        # fall back to a normal upload so a photo is never silently dropped.
+        # that asset to the album. Unmatched photos remain retryable failures
+        # unless fallback uploads are explicitly enabled.
         self.external_library_mode = bool(
             mig.get("external_library_mode", False)
+        )
+        self.external_library_fallback_upload = bool(
+            mig.get("external_library_fallback_upload", False)
         )
         # Lazily-built filename index per uploader (keyed by uploader name);
         # each Immich user sees a different set of assets, so indexes aren't
@@ -515,7 +518,7 @@ class Migrator:
             except Exception as e:
                 self._log(
                     f"⚠ Could not index Immich assets for "
-                    f"{uploader.name}: {e} — will upload instead"
+                    f"{uploader.name}: {e} — checking filenames individually"
                 )
                 idx = {}
             self._asset_index[uploader.name] = idx
@@ -595,7 +598,7 @@ class Migrator:
         # Dry-run: just log what would be done
         if self.dry_run:
             verb = (
-                "link-or-upload"
+                ("link-or-upload" if self.external_library_fallback_upload else "link-only")
                 if self.external_library_mode
                 else "download+upload"
             )
@@ -638,8 +641,17 @@ class Migrator:
                 self.stats.bump("linked")
                 self._log(f"🔗 Linked (external): {filename}")
                 return existing_id, uploader.name
-            # No match → fall through to a normal upload so the photo is
-            # never silently missing from the migrated album.
+            if not self.external_library_fallback_upload:
+                self.checkpoint.mark_failed(
+                    uploader.name, syno_id, error="external_match_not_found"
+                )
+                self.stats.bump("failed")
+                self._log(
+                    f"✖ No confident external match for {filename} (syno_id={syno_id}) — "
+                    "not uploaded; check library scan/access and capture dates, then retry. "
+                    "Set migration.external_library_fallback_upload=true to allow uploads."
+                )
+                return None, uploader.name
             self._log(
                 f"↑ No external match for {filename} — "
                 f"uploading"
@@ -837,6 +849,7 @@ class Migrator:
             )
             return
 
+        failures_before = self.stats.failed
         self.stats.current_album = name
         self._log(f"📂 Album: {name} (owner: {owner.name})")
 
@@ -965,9 +978,12 @@ class Migrator:
                     + (f", {fail} failed" if fail else "")
                 )
 
-        self.checkpoint.mark_album_done(passphrase)
+        if self.stats.failed == failures_before:
+            self.checkpoint.mark_album_done(passphrase)
+            self.stats.albums_done += 1
+        else:
+            self._log(f"⚠ Album '{name}' incomplete — failed items will be retried")
         self.checkpoint.save()
-        self.stats.albums_done += 1
 
     def _process_album_duplicate(
         self,
@@ -979,6 +995,7 @@ class Migrator:
         """Create separate album copies, one per user that
         can see this shared album. Each user only gets the
         photos they own."""
+        failures_before = self.stats.failed
         self.stats.current_album = name
         self._log(
             f"📂 Album (duplicate mode): {name}"
@@ -1114,9 +1131,12 @@ class Migrator:
                     + (f", {fail} failed" if fail else "")
                 )
 
-        self.checkpoint.mark_album_done(passphrase)
+        if self.stats.failed == failures_before:
+            self.checkpoint.mark_album_done(passphrase)
+            self.stats.albums_done += 1
+        else:
+            self._log(f"⚠ Album '{name}' incomplete — failed items will be retried")
         self.checkpoint.save()
-        self.stats.albums_done += 1
 
     def _share_album(
         self,

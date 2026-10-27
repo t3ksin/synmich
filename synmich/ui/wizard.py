@@ -269,7 +269,7 @@ def run_wizard() -> int:
         )
         muted(
             "  If yes, synmich links the existing photos to the albums instead "
-            "of re-uploading duplicates."
+            "of re-uploading duplicates. Unmatched photos are reported for retry, not uploaded."
         )
         config["migration"]["external_library_mode"] = _confirm(
             "Use external-library mode?",

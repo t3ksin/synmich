@@ -3,6 +3,8 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from synmich.core.checkpoint import Checkpoint
 from synmich.core.migrator import (
     Migrator,
@@ -227,6 +229,7 @@ def test_external_library_falls_through_to_upload_when_no_match(tmp_path):
     mig.external_library_mode = True
     mig._asset_index["cyrille"] = {}
     mig.sessions[0].immich.find_assets_by_filename.return_value = []
+    mig.external_library_fallback_upload = True
     mig.sessions[0].immich.upload_asset.return_value = ("imm-new", False, None)
     item = {"id": 42, "filename": "watch.jpg", "type": "photo"}
 
@@ -277,3 +280,81 @@ def test_already_uploaded_is_resumed_without_redownload(tmp_path):
     asset_id, _ = mig._process_one_asset(item, tmp_path, mig.sessions[0])
     assert asset_id == "imm-old"
     syno.download.assert_not_called()
+
+
+@pytest.mark.parametrize("lookup_error", [False, True])
+def test_external_library_no_match_never_uploads_by_default(tmp_path, lookup_error):
+    syno = MagicMock()
+    mig = _migrator(tmp_path, syno)
+    mig.external_library_mode = True
+    uploader = mig.sessions[0]
+    uploader.immich.build_filename_index.side_effect = RuntimeError("index unavailable")
+    if lookup_error:
+        uploader.immich.find_assets_by_filename.side_effect = RuntimeError("search unavailable")
+    else:
+        uploader.immich.find_assets_by_filename.return_value = []
+    item = {"id": 42, "filename": "IMG_0018.JPG", "type": "photo"}
+
+    assert mig._process_one_asset(item, tmp_path, uploader)[0] is None
+    assert mig.stats.failed == 1
+    assert mig.checkpoint.data["failed_items"]["cyrille"]["42"] == "external_match_not_found"
+    assert mig.checkpoint.is_uploaded("cyrille", "42") is None
+    syno.download.assert_not_called()
+    uploader.immich.upload_asset.assert_not_called()
+
+
+def test_external_library_targeted_lookup_recovers_index_miss(tmp_path):
+    syno = MagicMock()
+    mig = _migrator(tmp_path, syno)
+    mig.external_library_mode = True
+    mig._asset_index["cyrille"] = {}
+    uploader = mig.sessions[0]
+    uploader.immich.find_assets_by_filename.return_value = [("ext", None, "lib", "/a.jpg")]
+    item = {"id": 42, "filename": "a.jpg", "type": "photo"}
+    assert mig._process_one_asset(item, tmp_path, uploader)[0] == "ext"
+    syno.download.assert_not_called()
+    uploader.immich.upload_asset.assert_not_called()
+
+
+@pytest.mark.parametrize("duplicate", [False, True])
+def test_album_with_unmatched_external_asset_is_retried(tmp_path, duplicate):
+    syno = MagicMock()
+    mig = _migrator(tmp_path, syno)
+    mig.external_library_mode = True
+    if duplicate:
+        mig.shared_albums_mode = "duplicate"
+    uploader = mig.sessions[0]
+    uploader.immich.create_album.return_value = "album-id"
+    uploader.immich.find_assets_by_filename.return_value = []
+    uploader.immich.build_filename_index.return_value = {}
+    uploader.immich.add_assets_to_album.return_value = (1, 0)
+    syno.list_items.return_value = [
+        {"id": 42, "filename": "a.jpg", "type": "photo", "owner_user_id": 1}
+    ]
+    album = {"id": 3, "name": "Trip", "owner_user_id": 1, "shared": duplicate}
+    mig._process_album(album)
+    assert not mig.checkpoint.is_album_done("local-cyrille-3")
+
+    # A completed library scan makes the next run succeed without uploading.
+    mig._fallback_cache.clear()
+    uploader.immich.find_assets_by_filename.return_value = [("ext", None, "lib", "/a.jpg")]
+    mig._process_album(album)
+    assert mig.checkpoint.is_album_done("local-cyrille-3")
+    assert mig.checkpoint.is_uploaded("cyrille", "42") == "ext"
+    uploader.immich.upload_asset.assert_not_called()
+
+
+def test_ambiguous_external_filename_is_reported_without_upload(tmp_path):
+    mig = _migrator(tmp_path, MagicMock())
+    mig.external_library_mode = True
+    candidates = [
+        ("old", "2020-01-01T00:00:00Z", "lib"),
+        ("new", "2025-01-01T00:00:00Z", "lib"),
+    ]
+    mig._asset_index["cyrille"] = {"a.jpg": candidates}
+    uploader = mig.sessions[0]
+    uploader.immich.find_assets_by_filename.return_value = candidates
+    item = {"id": 42, "filename": "a.jpg", "type": "photo", "time": 1_700_000_000}
+    assert mig._process_one_asset(item, tmp_path, uploader)[0] is None
+    assert mig.stats.failed == 1
+    uploader.immich.upload_asset.assert_not_called()

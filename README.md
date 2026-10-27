@@ -167,7 +167,9 @@ If your photos are **already in Immich through an [external library](https://imm
 
 Without it, synmich uploads each photo, which lands a **second copy** in Immich's upload library: Immich's built-in deduplication compares content checksums, but it gives external-library assets a *dummy* checksum (`sha1('path:' + originalPath)`, [immich-app/immich#7804](https://github.com/immich-app/immich/discussions/7804)) instead of hashing the file — so the duplicate is invisible to that check and slips through.
 
-With the mode on, synmich builds an index of the assets already in Immich and, for each Synology photo, **matches it to the existing asset by filename + capture date** (`exifInfo.dateTimeOriginal`), then just adds that asset to the album — no download, no re-upload. Only the album/metadata is migrated; your media stays external. Any photo it can't confidently match is uploaded normally, so nothing is ever dropped.
+With the mode on, synmich builds an index of the assets already in Immich and, for each Synology photo, **matches it to the existing asset by filename + capture date** (`exifInfo.dateTimeOriginal`), then just adds that asset to the album — no download, no re-upload. Only the album/metadata is migrated; your media stays external. Photos it cannot confidently match are **not uploaded**: they are reported as failures and their albums remain incomplete so a later run retries them. Check that Immich's external-library scan has finished, the user's API key can see the files, and capture dates agree. This also prevents search/index errors from silently creating duplicates.
+
+To deliberately upload unmatched files, set `migration.external_library_fallback_upload: true` (default: `false`). This can create duplicates when an existing external asset was not found. Earlier versions always uploaded unmatched files; the new default also applies to existing configurations. Existing uploaded duplicates are not automatically deleted.
 
 ---
 

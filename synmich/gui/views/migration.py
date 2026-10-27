@@ -140,7 +140,7 @@ class MigrationView(ctk.CTkFrame):
         ctk.CTkCheckBox(
             c.body,
             text="Photos already in Immich via an external library "
-                 "(link instead of re-uploading)",
+                 "(link only; unmatched photos reported for retry)",
             variable=self.var_external, fg_color=W.GREEN,
             hover_color=W.GREEN_DK, checkbox_width=20, checkbox_height=20,
             corner_radius=0, border_width=2, font=W.font(12)).pack(

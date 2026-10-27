@@ -102,6 +102,11 @@ synmich gui                                          # 👉 launch the app
   editable installs — `python -m pip install --upgrade pip`, then reinstall.
 - **`synmich: command not found`:** activate the venv, or use
   `python -m synmich gui` (or `.venv/bin/synmich gui`).
+- **2FA code never requested:** update synmich; older versions rejected
+  standard DSM OTP challenges when optional token/type fields were absent.
+  Use the 6-digit code from your authenticator or Secure SignIn; push-only
+  approval and hardware security-key challenges are not supported. Keep 2FA
+  enabled. Login failures now show the DSM error rather than a generic prompt.
 - **`tkinter` missing (Linux):** `sudo apt install python3-tk` (Debian/Ubuntu)
   or `sudo dnf install python3-tkinter` (Fedora).
 

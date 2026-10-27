@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- **Missing 2FA prompt.** Accept standard DSM code-403/406 OTP challenges
+  without requiring optional JWT/type metadata. Use the documented v6 flow
+  when no challenge token is supplied, and remember devices returned as `did`.
+  Show the actual login error and explain unsupported push-only challenges.
+  Nested OTP dialogs appear above the account form and restore its modal grab;
+  an OTP dialog exception no longer leaves its login worker waiting forever.
+
 - **Live Photos and Synology error 117 (#13).** Prefer the logical-item ZIP
   even when thumbnail and item ids differ, validate image/video contents, and
   handle reversed unit roles. When a regular unit download returns error 117,

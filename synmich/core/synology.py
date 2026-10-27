@@ -214,6 +214,7 @@ class SynologyClient:
         self.sid: Optional[str] = None
         self.username: Optional[str] = None
         self.user_id: Optional[int] = None
+        self.last_login_error: Optional[str] = None
         # Lock to serialize HTTP requests on the same Session
         # (requests.Session is NOT thread-safe).
         self._lock = threading.Lock()
@@ -244,6 +245,7 @@ class SynologyClient:
         device_tokens.json, 600) to skip the OTP on future
         connections as long as Synology considers the device trusted.
         """
+        self.last_login_error = None
         if otp_provider is None:
             otp_provider = cli_otp_prompt
 
@@ -278,6 +280,7 @@ class SynologyClient:
                 )
             return True
         except (LoginFailed, OTPRequired) as e:
+            self.last_login_error = str(e)
             logging.getLogger("synmich").error("Synology login failed: %s", e)
             return False
 

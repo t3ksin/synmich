@@ -7,7 +7,7 @@ Flow:
     2. On success -> return SID
     3. If no token OR invalid token -> try a basic login
     4. If Synology returns code 403 (2FA required) -> ask for OTP
-    5. Resend login with OTP + JWT token + enable_device_token=yes
+    5. Resend login with OTP + optional challenge token + enable_device_token=yes
     6. Save the returned device_id for future connections
 
 Usage:
@@ -42,7 +42,7 @@ log = logging.getLogger("synmich")
 class OTPRequired(Exception):
     """Raised when 2FA is required and no otp_provider is supplied."""
 
-    def __init__(self, jwt_token: str, username: str):
+    def __init__(self, jwt_token: Optional[str], username: str):
         self.jwt_token = jwt_token
         self.username = username
         super().__init__(
@@ -66,9 +66,11 @@ _ERROR_MESSAGES = {
     403: "2-step verification required",
     404: "Invalid 2-step verification code",
     405: "Authenticator app not installed",
-    406: "Account email not verified",
-    407: "Account locked",
-    408: "Password expired (must be changed)",
+    406: "2-factor authentication code required",
+    407: "Source IP blocked by Synology",
+    408: "Password expired (cannot be changed through this API)",
+    409: "Password expired",
+    410: "Password must be changed in DSM",
 }
 
 
@@ -85,8 +87,9 @@ def _login_attempt(
 ) -> dict:
     """Attempt a login. Return the raw JSON response from Synology."""
 
-    # Version 7 when we have a device_id or OTP, otherwise 6 (more compatible)
-    api_version = "7" if (device_id or otp_code) else "6"
+    # DSM documents OTP and trusted devices in v6. Only the richer challenge
+    # flow needs v7; ordinary code-403 replies need neither JWT nor types.
+    api_version = "7" if jwt_token else "6"
 
     data = {
         "api": "SYNO.API.Auth",
@@ -100,6 +103,7 @@ def _login_attempt(
     if otp_code:
         data["otp_code"] = otp_code
         data["enable_device_token"] = "yes"
+        data["device_name"] = "synmich-cli"
 
     if jwt_token:
         data["token"] = jwt_token
@@ -159,7 +163,7 @@ def login_with_2fa(
             sid = r["data"]["sid"]
             log.info("Synology: login OK via device token (no OTP needed)")
             # The device_token is sometimes renewed
-            new_did = r["data"].get("device_id")
+            new_did = r["data"].get("device_id") or r["data"].get("did")
             if new_did and new_did != device_token:
                 save_device_token(username, base_url, new_did)
             return sid
@@ -182,16 +186,18 @@ def login_with_2fa(
     code = error.get("code", 0)
 
     # 3. If 2FA is required
-    if code == 403:
-        errors = error.get("errors", {})
+    if code in (403, 406):
+        errors = error.get("errors") or {}
+        if not isinstance(errors, dict):
+            errors = {}
         jwt_token = errors.get("token")
-        types = errors.get("types", [])
-        otp_required = any(t.get("type") == "otp" for t in types)
-
-        if not otp_required or not jwt_token:
+        types = errors.get("types") or []
+        if types and not any(t.get("type") == "otp" for t in types if isinstance(t, dict)):
             raise LoginFailed(
                 code,
-                "2FA required but token/type missing in response",
+                "This login challenge does not offer a verification code. "
+                "Choose the 6-digit verification-code method in Synology Secure SignIn; "
+                "push-only approval and security-key challenges are not supported.",
             )
 
         if otp_provider is None:
@@ -212,7 +218,7 @@ def login_with_2fa(
             if r.get("success"):
                 sid = r["data"]["sid"]
                 # Save the device token for next time
-                did = r["data"].get("device_id")
+                did = r["data"].get("device_id") or r["data"].get("did")
                 if did:
                     save_device_token(username, base_url, did)
                 log.info("Synology: login OK with OTP (device token saved)")

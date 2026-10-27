@@ -231,8 +231,10 @@ class SynmichApp(ctk.CTk):
 
         def ask():
             from synmich.gui.dialogs import prompt_otp
-            box["code"] = prompt_otp(self, username)
-            done.set()
+            try:
+                box["code"] = prompt_otp(self, username)
+            finally:
+                done.set()
 
         self.after(0, ask)
         done.wait()

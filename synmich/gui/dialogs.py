@@ -32,9 +32,7 @@ def _test_account(syno_url, verify, immich_url, vals, mode,
             if not sc.login(vals.get("syno_username", ""),
                             vals.get("syno_password", ""),
                             otp_provider=otp_provider):
-                return False, ("Synology login failed - check the username and "
-                               "password. If this account uses 2-step "
-                               "verification, enter the code when prompted.")
+                return False, sc.last_login_error or "Synology login failed."
         except Exception as e:  # noqa: BLE001
             return False, f"Synology error: {e}"
 
@@ -304,10 +302,14 @@ def prompt_folder(parent, start=None) -> str | None:
 
 def prompt_otp(parent, username: str) -> str | None:
     """Ask for a 2FA code (used when an account has 2-step verification)."""
-    dlg = ctk.CTkToplevel(parent)
+    # The account dialog may already own the modal grab. Make OTP its child
+    # so it appears above the account form, then restore that form's grab.
+    previous_grab = parent.grab_current()
+    owner = previous_grab if previous_grab is not None else parent
+    dlg = ctk.CTkToplevel(owner)
     dlg.title("Two-factor authentication")
     dlg.geometry("430x310")
-    dlg.transient(parent)
+    dlg.transient(owner)
     dlg.lift()
 
     ctk.CTkLabel(dlg, text="Two-factor authentication",
@@ -344,5 +346,9 @@ def prompt_otp(parent, username: str) -> str | None:
 
     dlg.after(200, _grab_and_focus)
     W.fix_wrapping(dlg)
-    parent.wait_window(dlg)
+    try:
+        parent.wait_window(dlg)
+    finally:
+        if previous_grab is not None and previous_grab.winfo_exists():
+            previous_grab.grab_set()
     return out.get("code") or None

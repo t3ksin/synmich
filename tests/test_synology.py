@@ -92,6 +92,21 @@ def test_list_items_requests_thumbnail_additional():
     assert "thumbnail" in extra["additional"]
 
 
+def test_album_listing_carries_context_on_every_page_but_not_timeline():
+    client = SynologyClient("http://nas:5000")
+    item = {"id": 42, "filename": "mom.jpg", "owner_user_id": 2}
+    with patch.object(client, "_best_version", return_value=7):
+        with patch.object(client, "_api_json", side_effect=[
+            {"list": [item]}, {"list": [dict(item, id=43)]}, {"list": []},
+        ]):
+            items = client.list_items(album_id=9, limit=1)
+        with patch.object(client, "_api_json", return_value={"list": [item]}):
+            timeline = client.list_items()
+    assert [it["_synmich_album_id"] for it in items] == [9, 9]
+    assert "_synmich_album_id" not in timeline[0]
+    assert "_synmich_album_id" not in item
+
+
 HEIC = b"\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1heic"
 MOV = b"\x00\x00\x00\x14ftypqt  \x00\x00\x00\x00qt  "
 
@@ -184,7 +199,8 @@ def test_download_live_photo_falls_back_when_parts_unavailable(tmp_path):
     assert motion is None
 
 
-def test_download_live_photo_extracts_item_id_zip(tmp_path):
+@pytest.mark.parametrize("album_id", [None, 9])
+def test_download_live_photo_extracts_item_id_zip(tmp_path, album_id):
     import io
     import zipfile
 
@@ -207,6 +223,8 @@ def test_download_live_photo_extracts_item_id_zip(tmp_path):
     zip_resp.iter_content.return_value = [zip_bytes]
 
     item = {**_LIVE, "additional": {"thumbnail": {"unit_id": 12534}}}
+    if album_id is not None:
+        item["_synmich_album_id"] = album_id
     with patch("synmich.core.synology.requests.Session") as sess_cls:
         sess = MagicMock()
         sess_cls.return_value = sess
@@ -218,6 +236,7 @@ def test_download_live_photo_extracts_item_id_zip(tmp_path):
     params = sess.get.call_args.kwargs["params"]
     assert params["item_id"] == "[12534]"
     assert "unit_id" not in params
+    assert params.get("album_id") == album_id
 
 
 def test_best_version_falls_back_to_6_when_info_fails():
@@ -365,7 +384,8 @@ def test_still_bytes_returned_as_mov_are_not_a_live_video(tmp_path):
 
 
 @pytest.mark.parametrize("shared", [False, True])
-def test_video_error_117_falls_back_to_streamed_item_download(tmp_path, shared):
+@pytest.mark.parametrize("album_id", [None, 9])
+def test_video_error_117_falls_back_to_streamed_item_download(tmp_path, shared, album_id):
     import requests as req
     client = SynologyClient("http://nas:5000", max_retries=1)
     client.sid = "sid"
@@ -379,6 +399,8 @@ def test_video_error_117_falls_back_to_streamed_item_download(tmp_path, shared):
     success.headers = {"Content-Type": "video/quicktime"}
     success.iter_content.return_value = [MOV]
     item = {"id": 105315, "filename": "IMG_0002.MOV", "owner_user_id": 0 if shared else 1}
+    if album_id is not None:
+        item["_synmich_album_id"] = album_id
     with patch("synmich.core.synology.requests.Session") as factory:
         factory.return_value.get.side_effect = [error, success]
         path = client.download(item, tmp_path)
@@ -390,6 +412,9 @@ def test_video_error_117_falls_back_to_streamed_item_download(tmp_path, shared):
         "SYNO.FotoTeam.Download" if shared else "SYNO.Foto.Download"
     )
     assert calls[1].kwargs["stream"] is True
+    for call in calls:
+        assert call.kwargs["params"].get("album_id") == album_id
+        assert call.kwargs["params"]["version"] == ("2" if album_id is not None else "1")
     success.iter_content.assert_called_once_with(1024 * 1024)
     error.close.assert_called_once()
     success.close.assert_called_once()

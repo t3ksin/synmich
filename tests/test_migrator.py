@@ -70,6 +70,49 @@ def test_download_failure_increments_failed_and_logs(tmp_path):
     assert any("download failed" in m for m in mig.stats.last_messages)
 
 
+@pytest.mark.parametrize("workers", [1, 2])
+@pytest.mark.parametrize("mode", ["link", "duplicate"])
+def test_shared_album_downloads_use_listing_account_and_upload_to_contributor(
+    tmp_path, workers, mode
+):
+    source = MagicMock()
+    mig = _migrator(tmp_path, source)
+    owner = mig.sessions[0]
+    mom = UserSession("mom", MagicMock(), MagicMock(), 2, "immich-2")
+    mig.sessions.append(mom)
+    mig.sessions_by_name["mom"] = mom
+    mig.syno_id_to_session[2] = mom
+    mig.shared_albums_mode = mode
+    mig.workers = workers
+    mig.work_dir = tmp_path
+    item = {"id": 42, "filename": "mom.jpg", "owner_user_id": 2, "_synmich_album_id": 9}
+    source.list_items.return_value = [item]
+    photo = tmp_path / "photo.jpg"
+    photo.write_bytes(b"correct contributor photo")
+    source.download.return_value = photo
+    mom.immich.upload_asset.return_value = ("mom-photo", False, None)
+    for session in (owner, mom):
+        session.immich.create_album.return_value = "christmas"
+        session.immich.add_assets_to_album.return_value = (1, 0)
+    album = {
+        "id": 9, "name": "Christmas", "shared": True, "passphrase": "christmas",
+        "owner_user_id": 1,
+        "additional": {"sharing_info": {
+            "owner": {"id": 1}, "permission": [{"db_id": 2}],
+        }},
+    }
+
+    mig._process_album(album)
+
+    source.download.assert_called_once()
+    assert source.download.call_args.args[0]["_synmich_album_id"] == 9
+    mom.syno.download.assert_not_called()
+    mom.immich.upload_asset.assert_called_once()
+    owner.immich.upload_asset.assert_not_called()
+    assert mig.checkpoint.is_uploaded("mom", "42") == "mom-photo"
+    assert mig.checkpoint.is_album_done("christmas")
+
+
 def test_date_filter_skips_out_of_range(tmp_path):
     syno = MagicMock()
     mig = _migrator(tmp_path, syno)

@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [2.4.1] - 2026-11-17
+
+### Fixed
+
+- **Shared albums with multiple contributors (#19).** Keep the album context
+  on original, fallback and Live Photo downloads, using the account that listed
+  the album. Migration still uploads to each contributor's Immich account.
+  This prevents IDs from being resolved in an unrelated personal library.
+  Contributors' local files are stored separately to avoid ID/name collisions.
+- **Folder export resume (#20).** Persist each completed photo (both files for
+  Live Photos) in the destination. Restarting after stopping or changing the
+  album/timeline options reuses recorded files whose size and modification time
+  still match. Missing, changed and incomplete files are retried. Partial
+  downloads are staged before publication, and the GUI counts reused files and
+  distinguishes stopped runs from completed ones. Exports made before this fix
+  have no completion records and must be downloaded once to establish them.
+- Pin CI to Ubuntu 24.04 so the supported Python 3.9–3.14 matrix remains
+  available after `ubuntu-latest` moved to Ubuntu 26.04.
+
 ## [2.4.0] - 2026-10-27
 
 ### Performance

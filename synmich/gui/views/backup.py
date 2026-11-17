@@ -12,24 +12,14 @@ import re
 import threading
 import time
 import tkinter as tk
-from pathlib import Path
 
 import customtkinter as ctk
 
+from synmich.core.backup import run_backup
 from synmich.core.migrator import (
     MigrationControl,
     MigrationStats,
-    album_key,
-    safe_name,
 )
-
-
-def _save_item(syno, it, folder):
-    """Download one item; Live Photos drop still + motion in the same folder."""
-    if it.get("type") == "live":
-        still, motion = syno.download_live_photo(it, folder)
-        return still if still and motion else None
-    return syno.download(it, folder)
 from synmich.gui import widgets as W
 from synmich.ui.album_selector import _build_records
 
@@ -49,98 +39,6 @@ def _plain(s):
     s = re.sub(r"\[/?[^\]]*\]", "", str(s))
     s = re.sub(r"[^\x00-\x7F]+", "", s)
     return re.sub(r"[ \t]{2,}", " ", s).strip()
-
-
-def run_backup(sessions, selected, all_mode, owner_only, dest, stats, control,
-               include_timeline=False):
-    dest = Path(dest)
-    seen, jobs = set(), []
-    for s in sessions:
-        try:
-            albums = s.syno.list_albums()
-        except Exception as e:  # noqa: BLE001
-            stats.log_message(f"list albums {s.name}: {e}")
-            continue
-        for a in albums:
-            k = album_key(s.name, a)
-            if k in seen:
-                continue
-            seen.add(k)
-            if all_mode or k in selected:
-                jobs.append((s, a))
-
-    # Albums count as work units; the full timeline (if enabled) adds one
-    # extra unit per account, downloaded last into a "timeline" folder.
-    stats.albums_total = len(jobs) + (len(sessions) if include_timeline else 0)
-    if not jobs and not include_timeline:
-        stats.log_message(
-            "No album found for these accounts. Check the Synology address "
-            "and that the account has access to Synology Photos albums.")
-    for s, a in jobs:
-        if not control.check():
-            break
-        name = a.get("name", "album")
-        stats.current_album = name
-        stats.log_message(f"Album: {name}")
-        sharing = a.get("additional", {}).get("sharing_info", {}) or {}
-        oid = sharing.get("owner", {}).get("id")
-        owner_id = (oid if (oid is not None and oid > 0)
-                    else a.get("owner_user_id"))
-        try:
-            items = s.syno.list_items(album_id=a["id"])
-        except Exception as e:  # noqa: BLE001
-            stats.log_message(f"list items {name}: {e}")
-            continue
-        if owner_only:
-            items = [it for it in items
-                     if it.get("owner_user_id") == owner_id]
-        folder = dest / safe_name(s.name) / safe_name(name)
-        stats.begin_items(len(items))
-        for it in items:
-            if not control.check():
-                break
-            try:
-                fp = _save_item(s.syno, it, folder)
-            except Exception:  # noqa: BLE001
-                fp = None
-            if fp:
-                stats.uploaded += 1
-            else:
-                stats.failed += 1
-                stats.log_message(f"failed: {it.get('filename')}")
-            stats.items_done += 1
-        stats.albums_done += 1
-
-    # Full timeline: every photo of each account (including those in no
-    # album), saved under <destination>/<user>/timeline/. Done last.
-    if include_timeline:
-        for s in sessions:
-            if not control.check():
-                break
-            stats.current_album = f"Timeline - {s.name}"
-            stats.log_message(f"Timeline: {s.name}")
-            try:
-                items = s.syno.list_items()
-            except Exception as e:  # noqa: BLE001
-                stats.log_message(f"list timeline {s.name}: {e}")
-                continue
-            folder = dest / safe_name(s.name) / "timeline"
-            stats.begin_items(len(items))
-            for it in items:
-                if not control.check():
-                    break
-                try:
-                    fp = _save_item(s.syno, it, folder)
-                except Exception:  # noqa: BLE001
-                    fp = None
-                if fp:
-                    stats.uploaded += 1
-                else:
-                    stats.failed += 1
-                    stats.log_message(f"failed: {it.get('filename')}")
-                stats.items_done += 1
-            stats.albums_done += 1
-    stats.current_step = "done"
 
 
 class BackupView(ctk.CTkFrame):
@@ -174,8 +72,10 @@ class BackupView(ctk.CTkFrame):
         counters = ctk.CTkFrame(run.body, fg_color="transparent")
         counters.pack(fill="x", pady=(6, 0))
         self.v_down = tk.IntVar()
+        self.v_skip = tk.IntVar()
         self.v_fail = tk.IntVar()
         for lbl, var, col in [("DOWNLOADED", self.v_down, W.GREEN),
+                              ("ALREADY SAVED", self.v_skip, W.BLUE),
                               ("FAILED", self.v_fail, W.RED)]:
             b = ctk.CTkFrame(counters, fg_color="transparent")
             b.pack(side="left", expand=True)
@@ -344,8 +244,8 @@ class BackupView(ctk.CTkFrame):
         try:
             records = _build_records(self.app.syno_sessions)
         except Exception as e:  # noqa: BLE001
-            self.after(0, lambda: (self._busy(False),
-                                   self._set_log(f"Load albums failed: {e}")))
+            self.after(0, lambda error=str(e): (self._busy(False),
+                                   self._set_log(f"Load albums failed: {error}")))
             return
         self.after(0, lambda: self._populate(records))
 
@@ -428,6 +328,7 @@ class BackupView(ctk.CTkFrame):
         if s is None:
             return
         self.v_down.set(s.uploaded)
+        self.v_skip.set(s.skipped)
         self.v_fail.set(s.failed)
         el, eta, rate = (int(s.elapsed_seconds()), int(s.eta_seconds()),
                          s.rate_per_minute())
@@ -446,18 +347,21 @@ class BackupView(ctk.CTkFrame):
                 self.log.insert("end", _plain(m) + "\n")
             self.log.see("end")
             self._log_count = total
-        if s.current_step == "done" and not self._done:
+        if s.current_step in {"done", "stopped", "error"} and not self._done:
             self._done = True
-            self.progress.set(1)
+            status = {"done": "complete", "stopped": "stopped", "error": "failed"}[s.current_step]
+            if s.current_step == "done":
+                self.progress.set(1)
             self.stop_btn.configure(state="disabled")
             self.start_btn.configure(state="normal")
             self.app.last_run = {"label": "Synology to local", "rows": [
                 ("Downloaded", str(s.uploaded), W.GREEN),
+                ("Already saved", str(s.skipped), W.BLUE),
                 ("Failed", str(s.failed), W.RED),
                 ("Albums", str(s.albums_done), W.TEXT),
                 ("Total time", W.fmt_duration(el), W.MUTED)]}
             self._set_log(
-                f"\nBackup complete - {s.uploaded} downloaded, "
+                f"\nBackup {status} - {s.uploaded} downloaded, {s.skipped} already saved, "
                 f"{s.failed} failed, {s.albums_done} album(s) in "
                 f"{W.fmt_duration(el)}.\n"
                 f"Saved to: {self.dest}")

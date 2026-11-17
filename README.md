@@ -4,7 +4,7 @@
 
 ### Migrate Synology Photos to Immich — or a local backup — properly: albums, sharing and all.
 
-![version](https://img.shields.io/badge/version-2.4.0-1D9E75)
+![version](https://img.shields.io/badge/version-2.4.1-1D9E75)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![python](https://img.shields.io/badge/python-3.9%2B-3776AB)
 ![platform](https://img.shields.io/badge/GUI%20%2B%20CLI-1e2a36)
@@ -126,6 +126,29 @@ synmich gui                                          # 👉 launch the app
 - ♻️ **Resumable & deduplicated** — a checkpoint records every item, and photos already in Immich are matched by **SHA1** and skipped. Stop and re-run any time, no duplicates.
 - 🩺 **Doctor** — one command checks your servers, accounts, free disk space and config, with a clear ✓ / ✗ for each.
 - 🔒 **Safe by design** — the Synology NAS is only ever **read**, never modified.
+
+### Resuming a local export
+
+Choose the same destination and start again. The export records completed items
+in `.synmich-backup.sqlite3` inside that destination. Keep this file with your
+backup. Changing the album selection, **Owner only / All photos**, or timeline
+option preserves progress for files already saved in the same location. The
+**Already saved** counter shows files reused without downloading them again.
+Missing files, changed sizes/modification times, and incomplete Live Photos are
+retried. New destinations get an independent backup.
+
+Photos from other contributors are saved inside the album's
+`_contributors/<Synology user ID>/` folder to keep overlapping IDs and filenames
+separate. Downloads use the selected account's album permissions, including for
+contributors without a configured local-backup account. Immich migration still
+requires each contributor's configured destination account.
+
+Exports created before this fix have no completion records and are downloaded
+once to establish trusted progress. File existence or size alone cannot prove
+that an older shared-album export contains the correct photo (see
+[#19](https://github.com/t3ksin/synmich/issues/19)). Previously migrated Immich
+assets and migration checkpoints are not automatically repaired: first verify
+the affected albums against Synology and use a fresh local export to compare.
 
 ---
 

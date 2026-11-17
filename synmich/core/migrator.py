@@ -589,6 +589,7 @@ class Migrator:
         item: Dict[str, Any],
         folder: Path,
         uploader: UserSession,
+        source: Optional[UserSession] = None,
     ) -> Tuple[Optional[str], str]:
         """Returns (immich_asset_id or None, uploader_name)."""
 
@@ -686,12 +687,18 @@ class Migrator:
             return None, uploader.name
 
         motion_path: Optional[Path] = None
+        # Album IDs belong to the account that listed the album. Keep that
+        # authenticated source while uploading to the contributor's Immich
+        # account. Separate contributors' local files (their IDs can overlap).
+        downloader = (source or uploader).syno
+        if source is not None:
+            folder = folder / safe_name(uploader.name)
         started = time.perf_counter()
         try:
             if item.get("type") == "live":
-                filepath, motion_path = uploader.syno.download_live_photo(item, folder)
+                filepath, motion_path = downloader.download_live_photo(item, folder)
             else:
-                filepath = uploader.syno.download(item, folder)
+                filepath = downloader.download(item, folder)
         finally:
             self.stats.bump("download_seconds", time.perf_counter() - started)
         self.stats.bump("downloaded_bytes", sum(
@@ -978,11 +985,11 @@ class Migrator:
 
         if self.workers <= 1:
             self._process_items_sequential(
-                items, folder, uploaded_by_uploader
+                items, folder, uploaded_by_uploader, source=owner
             )
         else:
             self._process_items_parallel(
-                items, folder, uploaded_by_uploader
+                items, folder, uploaded_by_uploader, source=owner
             )
 
         if not self.control.check():
@@ -1165,11 +1172,11 @@ class Migrator:
 
             if self.workers <= 1:
                 self._process_items_sequential(
-                    user_items, folder, uploaded_by_uploader
+                    user_items, folder, uploaded_by_uploader, source=list_owner
                 )
             else:
                 self._process_items_parallel(
-                    user_items, folder, uploaded_by_uploader
+                    user_items, folder, uploaded_by_uploader, source=list_owner
                 )
 
             if not self.control.check():
@@ -1261,6 +1268,7 @@ class Migrator:
         items: List[Dict[str, Any]],
         folder: Path,
         uploaded_by_uploader: Dict[str, List[str]],
+        source: Optional[UserSession] = None,
     ) -> None:
         for item in items:
             if not self.control.check():
@@ -1271,7 +1279,7 @@ class Migrator:
             if not uploader:
                 continue
             asset_id, name = self._process_one_asset(
-                item, folder, uploader
+                item, folder, uploader, source=source
             )
             if asset_id:
                 uploaded_by_uploader.setdefault(
@@ -1286,6 +1294,7 @@ class Migrator:
         items: List[Dict[str, Any]],
         folder: Path,
         uploaded_by_uploader: Dict[str, List[str]],
+        source: Optional[UserSession] = None,
     ) -> None:
         with ThreadPoolExecutor(
             max_workers=self.workers
@@ -1304,6 +1313,7 @@ class Migrator:
                     item,
                     folder,
                     uploader,
+                    source=source,
                 )
                 futures[fut] = item
 

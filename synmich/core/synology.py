@@ -492,6 +492,11 @@ class SynologyClient:
             chunk = data.get("list") or []
             if not chunk:
                 break
+            # Album item/unit IDs must be downloaded in the same album
+            # context. Without it, another user's ID can resolve to an
+            # unrelated photo in the authenticated user's personal library.
+            if album_id is not None:
+                chunk = [{**item, "_synmich_album_id": album_id} for item in chunk]
             all_items.extend(chunk)
             if len(chunk) < limit:
                 break
@@ -613,6 +618,8 @@ class SynologyClient:
             "cache_key": cache_key,
             "_sid": sid,
         }
+        if item.get("_synmich_album_id") is not None:
+            params.update(version="2", album_id=item["_synmich_album_id"])
 
         if _by_item_id:
             params.pop("unit_id")
@@ -806,6 +813,8 @@ class SynologyClient:
             "item_id": json.dumps([item_id]),
             "_sid": sid,
         }
+        if item.get("_synmich_album_id") is not None:
+            params.update(version="2", album_id=item["_synmich_album_id"])
         last_error = None
         for attempt in range(1, self.max_retries + 1):
             sess = self._download_pool.acquire()
